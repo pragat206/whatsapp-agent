@@ -10,9 +10,12 @@ alembic upgrade head
 echo ">>> [start.sh] alembic upgrade completed"
 
 if [ "${RUN_SEED:-0}" = "1" ]; then
-  echo ">>> [start.sh] RUN_SEED=1 — running seed"
-  python -m scripts.seed
-  echo ">>> [start.sh] seed completed"
+  echo ">>> [start.sh] RUN_SEED=1 — running seed (non-fatal)"
+  if python -m scripts.seed; then
+    echo ">>> [start.sh] seed completed"
+  else
+    echo ">>> [start.sh] seed FAILED — continuing to launch uvicorn anyway"
+  fi
 fi
 
 echo ">>> [start.sh] launching uvicorn"
