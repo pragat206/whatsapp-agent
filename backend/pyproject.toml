@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "terrarex-whatsapp-agent"
+version = "0.1.0"
+description = "Terra Rex Energy WhatsApp AI agent platform (FastAPI + Postgres + Redis + AiSensy)"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.29",
+  "pydantic>=2.6",
+  "pydantic-settings>=2.2",
+  "sqlalchemy>=2.0",
+  "alembic>=1.13",
+  "psycopg[binary]>=3.1",
+  "pgvector>=0.2.5",
+  "redis>=5.0",
+  "rq>=1.16",
+  "httpx>=0.27",
+  "tenacity>=8.2",
+  "passlib[bcrypt]>=1.7",
+  "pyjwt>=2.8",
+  "python-multipart>=0.0.9",
+  "pandas>=2.2",
+  "openpyxl>=3.1",
+  "phonenumbers>=8.13",
+  "anthropic>=0.34",
+  "openai>=1.40",
+  "structlog>=24.1",
+  "pypdf>=4.2",
+  "email-validator>=2.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.23",
+  "httpx>=0.27",
+  "ruff>=0.4",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

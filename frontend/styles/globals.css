@@ -1,0 +1,64 @@
+*, *::before, *::after { box-sizing: border-box; }
+
+:root {
+  --bg: #0b0f14;
+  --panel: #111823;
+  --border: #1e293b;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --accent: #f59e0b;       /* Terra Rex solar orange */
+  --accent-2: #22c55e;
+  --danger: #ef4444;
+  --info: #3b82f6;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+button {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 0.5rem 0.9rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); color: #1a1408; border-color: var(--accent); font-weight: 600; }
+button.danger { background: var(--danger); color: white; border-color: var(--danger); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+input, select, textarea {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 0.5rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  width: 100%;
+}
+
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
+.row { display: flex; gap: 1rem; }
+.col { display: flex; flex-direction: column; gap: 0.75rem; }
+.muted { color: var(--muted); }
+.small { font-size: 0.82rem; }
+.pill { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.72rem; border: 1px solid var(--border); }
+.pill.ai { color: #a78bfa; border-color: #4c1d95; }
+.pill.paused { color: #fbbf24; border-color: #92400e; }
+.pill.human { color: #22c55e; border-color: #14532d; }
+.pill.closed { color: var(--muted); }
+
+.table { width: 100%; border-collapse: collapse; }
+.table th, .table td { padding: 0.55rem 0.6rem; border-bottom: 1px solid var(--border); text-align: left; font-size: 0.9rem; }
+.table th { color: var(--muted); font-weight: 500; }
