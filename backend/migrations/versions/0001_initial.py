@@ -21,25 +21,33 @@ def upgrade() -> None:
     op.execute("CREATE EXTENSION IF NOT EXISTS vector")
     op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
 
+    # create_type=False prevents SQLAlchemy from auto-creating the type a
+    # second time when the Enum is attached to a table column below.
     role = sa.Enum(
-        "admin", "campaign_manager", "support_agent", "viewer", name="role"
+        "admin", "campaign_manager", "support_agent", "viewer",
+        name="role", create_type=False,
     )
     conv_state = sa.Enum(
-        "AI_ACTIVE", "AI_PAUSED", "HUMAN_ACTIVE", "CLOSED", name="conversation_state"
+        "AI_ACTIVE", "AI_PAUSED", "HUMAN_ACTIVE", "CLOSED",
+        name="conversation_state", create_type=False,
     )
-    msg_direction = sa.Enum("inbound", "outbound", name="message_direction")
+    msg_direction = sa.Enum(
+        "inbound", "outbound", name="message_direction", create_type=False,
+    )
     msg_status = sa.Enum(
-        "queued", "sent", "delivered", "read", "failed", "received", name="message_status"
+        "queued", "sent", "delivered", "read", "failed", "received",
+        name="message_status", create_type=False,
     )
     camp_status = sa.Enum(
         "draft", "mapped", "scheduled", "sending", "paused", "completed", "cancelled", "failed",
-        name="campaign_status",
+        name="campaign_status", create_type=False,
     )
     rcp_status = sa.Enum(
         "pending", "sending", "sent", "delivered", "read", "replied", "failed", "skipped", "invalid",
-        name="campaign_recipient_status",
+        name="campaign_recipient_status", create_type=False,
     )
 
+    # Create each enum type explicitly (checkfirst skips if it already exists).
     for enum in (role, conv_state, msg_direction, msg_status, camp_status, rcp_status):
         enum.create(op.get_bind(), checkfirst=True)
 
