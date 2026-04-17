@@ -144,25 +144,25 @@ AGENT = {
 def seed() -> None:
     db = SessionLocal()
     try:
-        if db.scalar(select(User).where(User.email == "admin@terrarex.local")) is None:
+        if db.scalar(select(User).where(User.email == "admin@terrarex.in")) is None:
             admin = User(
-                email="admin@terrarex.local",
+                email="admin@terrarex.in",
                 name="Terra Rex Admin",
                 password_hash=hash_password("admin123"),
                 role=Role.admin,
             )
             db.add(admin)
-            print("created admin user: admin@terrarex.local / admin123")
+            print("created admin user: admin@terrarex.in / admin123")
 
-        if db.scalar(select(User).where(User.email == "ops@terrarex.local")) is None:
+        if db.scalar(select(User).where(User.email == "ops@terrarex.in")) is None:
             db.add(User(
-                email="ops@terrarex.local",
+                email="ops@terrarex.in",
                 name="Ops Manager",
                 password_hash=hash_password("ops12345"),
                 role=Role.campaign_manager,
             ))
             db.add(User(
-                email="support@terrarex.local",
+                email="support@terrarex.in",
                 name="Support Agent",
                 password_hash=hash_password("support12345"),
                 role=Role.support_agent,
