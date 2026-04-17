@@ -5,9 +5,9 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "startCommand": "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT",
+    "startCommand": "/app/scripts/start.sh",
     "healthcheckPath": "/healthz",
-    "healthcheckTimeout": 30,
+    "healthcheckTimeout": 120,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 3
   }

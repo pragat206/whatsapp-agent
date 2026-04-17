@@ -1,6 +1,6 @@
 FROM python:3.11-slim AS base
 
-ARG BUILD_REV=2026-04-17-enum-fix-v3
+ARG BUILD_REV=2026-04-17-enum-fix-v4
 ENV BUILD_REV=${BUILD_REV}
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -21,6 +21,7 @@ COPY app ./app
 COPY migrations ./migrations
 COPY alembic.ini ./
 COPY scripts ./scripts
+RUN chmod +x /app/scripts/start.sh
 
 RUN useradd --system --uid 1001 appuser \
     && chown -R appuser:appuser /app
@@ -32,4 +33,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS "http://127.0.0.1:${PORT}/healthz" || exit 1
 
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]
+CMD ["/app/scripts/start.sh"]
