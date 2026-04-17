@@ -21,6 +21,18 @@ def upgrade() -> None:
     op.execute("CREATE EXTENSION IF NOT EXISTS vector")
     op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
 
+    # Drop any stale enum types from a previously-failed initial migration.
+    # Safe because 0001 is the first migration — no tables yet depend on them.
+    for type_name in (
+        "role",
+        "conversation_state",
+        "message_direction",
+        "message_status",
+        "campaign_status",
+        "campaign_recipient_status",
+    ):
+        op.execute(f'DROP TYPE IF EXISTS {type_name} CASCADE')
+
     # create_type=False prevents SQLAlchemy from auto-creating the type a
     # second time when the Enum is attached to a table column below.
     role = sa.Enum(
@@ -47,7 +59,6 @@ def upgrade() -> None:
         name="campaign_recipient_status", create_type=False,
     )
 
-    # Create each enum type explicitly (checkfirst skips if it already exists).
     for enum in (role, conv_state, msg_direction, msg_status, camp_status, rcp_status):
         enum.create(op.get_bind(), checkfirst=True)
 
