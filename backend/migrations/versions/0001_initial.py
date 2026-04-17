@@ -33,28 +33,29 @@ def upgrade() -> None:
     ):
         op.execute(f'DROP TYPE IF EXISTS {type_name} CASCADE')
 
-    # create_type=False prevents SQLAlchemy from auto-creating the type a
-    # second time when the Enum is attached to a table column below.
-    role = sa.Enum(
+    # Use postgresql.ENUM directly (not sa.Enum) — create_type=False is only
+    # honored by the postgres dialect type. With sa.Enum the kwarg is silently
+    # swallowed and SQLAlchemy re-emits CREATE TYPE during op.create_table().
+    role = postgresql.ENUM(
         "admin", "campaign_manager", "support_agent", "viewer",
         name="role", create_type=False,
     )
-    conv_state = sa.Enum(
+    conv_state = postgresql.ENUM(
         "AI_ACTIVE", "AI_PAUSED", "HUMAN_ACTIVE", "CLOSED",
         name="conversation_state", create_type=False,
     )
-    msg_direction = sa.Enum(
+    msg_direction = postgresql.ENUM(
         "inbound", "outbound", name="message_direction", create_type=False,
     )
-    msg_status = sa.Enum(
+    msg_status = postgresql.ENUM(
         "queued", "sent", "delivered", "read", "failed", "received",
         name="message_status", create_type=False,
     )
-    camp_status = sa.Enum(
+    camp_status = postgresql.ENUM(
         "draft", "mapped", "scheduled", "sending", "paused", "completed", "cancelled", "failed",
         name="campaign_status", create_type=False,
     )
-    rcp_status = sa.Enum(
+    rcp_status = postgresql.ENUM(
         "pending", "sending", "sent", "delivered", "read", "replied", "failed", "skipped", "invalid",
         name="campaign_recipient_status", create_type=False,
     )
