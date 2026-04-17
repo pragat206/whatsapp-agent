@@ -9,5 +9,11 @@ echo ">>> [start.sh] running alembic upgrade head"
 alembic upgrade head
 echo ">>> [start.sh] alembic upgrade completed"
 
+if [ "${RUN_SEED:-0}" = "1" ]; then
+  echo ">>> [start.sh] RUN_SEED=1 — running seed"
+  python -m scripts.seed
+  echo ">>> [start.sh] seed completed"
+fi
+
 echo ">>> [start.sh] launching uvicorn"
 exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}"
