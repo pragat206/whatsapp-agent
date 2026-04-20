@@ -71,7 +71,25 @@ def send_campaign(campaign_id: uuid.UUID) -> None:
             )
         ).first()
         if not remaining:
-            campaign.status = CampaignStatus.completed
+            stats = db.execute(
+                select(CampaignRecipient.status).where(
+                    CampaignRecipient.campaign_id == campaign.id
+                )
+            ).all()
+            counts: dict[CampaignRecipientStatus, int] = {}
+            for (status_val,) in stats:
+                counts[status_val] = counts.get(status_val, 0) + 1
+            sent_like = (
+                counts.get(CampaignRecipientStatus.sent, 0)
+                + counts.get(CampaignRecipientStatus.delivered, 0)
+                + counts.get(CampaignRecipientStatus.read, 0)
+                + counts.get(CampaignRecipientStatus.replied, 0)
+            )
+            failed_n = counts.get(CampaignRecipientStatus.failed, 0)
+            # If everything failed, reflect that at campaign level.
+            campaign.status = (
+                CampaignStatus.failed if sent_like == 0 and failed_n > 0 else CampaignStatus.completed
+            )
             campaign.completed_at = dt.datetime.now(dt.timezone.utc)
             db.commit()
     finally:
@@ -120,9 +138,27 @@ def _send_one(db: Session, *, campaign: Campaign, recipient: CampaignRecipient) 
         logger.warning("campaign_send_transient_fail", recipient=str(recipient.id), error=str(exc))
         return
 
+    provider_id = _extract_provider_id(resp)
+    if not provider_id:
+        recipient.status = CampaignRecipientStatus.failed
+        recipient.error = _response_error_hint(resp)[:1000]
+        db.add(
+            CampaignRecipientEvent(
+                recipient_id=recipient.id,
+                kind="send_failed_no_provider_id",
+                raw=resp if isinstance(resp, dict) else {"resp": str(resp)},
+            )
+        )
+        logger.warning(
+            "campaign_send_missing_provider_id",
+            recipient=str(recipient.id),
+            response=str(resp)[:500],
+        )
+        return
+
     recipient.status = CampaignRecipientStatus.sent
     recipient.sent_at = dt.datetime.now(dt.timezone.utc)
-    recipient.provider_message_id = _extract_provider_id(resp)
+    recipient.provider_message_id = provider_id
     db.add(
         CampaignRecipientEvent(
             recipient_id=recipient.id,
@@ -151,3 +187,12 @@ def _extract_provider_id(resp) -> str | None:
         if data.get(key):
             return str(data[key])
     return None
+
+
+def _response_error_hint(resp) -> str:
+    if isinstance(resp, dict):
+        # Common provider error-ish fields in 2xx bodies.
+        for key in ("error", "message", "detail", "msg"):
+            if resp.get(key):
+                return f"provider did not return message id: {resp.get(key)}"
+    return "provider did not return message id"
