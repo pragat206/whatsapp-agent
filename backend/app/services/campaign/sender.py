@@ -138,27 +138,33 @@ def _send_one(db: Session, *, campaign: Campaign, recipient: CampaignRecipient) 
         logger.warning("campaign_send_transient_fail", recipient=str(recipient.id), error=str(exc))
         return
 
-    provider_id = _extract_provider_id(resp)
-    if not provider_id:
+    # AiSensy's campaign V2 endpoint typically returns
+    # `{"success": true, "message": "Success"}` — no messageId. An inline error
+    # signal (e.g. `success: false`, `status: "error"`, non-empty `error`) is the
+    # only reliable way to treat a 2xx as a failure. Everything else = accepted
+    # by AiSensy; the status webhook later links the real provider message id.
+    error_hint = _response_error_hint(resp)
+    if error_hint is not None:
         recipient.status = CampaignRecipientStatus.failed
-        recipient.error = _response_error_hint(resp)[:1000]
+        recipient.error = error_hint[:1000]
         db.add(
             CampaignRecipientEvent(
                 recipient_id=recipient.id,
-                kind="send_failed_no_provider_id",
+                kind="send_failed_provider_error",
                 raw=resp if isinstance(resp, dict) else {"resp": str(resp)},
             )
         )
         logger.warning(
-            "campaign_send_missing_provider_id",
+            "campaign_send_provider_error",
             recipient=str(recipient.id),
             response=str(resp)[:500],
         )
         return
 
+    provider_id = _extract_provider_id(resp)
     recipient.status = CampaignRecipientStatus.sent
     recipient.sent_at = dt.datetime.now(dt.timezone.utc)
-    recipient.provider_message_id = provider_id
+    recipient.provider_message_id = provider_id  # may be None on campaign API
     db.add(
         CampaignRecipientEvent(
             recipient_id=recipient.id,
@@ -189,10 +195,36 @@ def _extract_provider_id(resp) -> str | None:
     return None
 
 
-def _response_error_hint(resp) -> str:
-    if isinstance(resp, dict):
-        # Common provider error-ish fields in 2xx bodies.
-        for key in ("error", "message", "detail", "msg"):
-            if resp.get(key):
-                return f"provider did not return message id: {resp.get(key)}"
-    return "provider did not return message id"
+def _response_error_hint(resp) -> str | None:
+    """Return a human-readable error hint if `resp` explicitly signals failure.
+
+    AiSensy returns 2xx on success and often includes a `"message"` field set
+    to "Success" — so we must not treat the presence of `message` as an error.
+    Only explicit negative signals count:
+      * `success: false`  → error
+      * `status: "error" | "failed" | "failure"`
+      * `error` / `errors` non-empty
+      * `code` that is non-2xx numeric
+    """
+    if not isinstance(resp, dict):
+        return None
+
+    success_flag = resp.get("success")
+    if success_flag is False:
+        return str(resp.get("message") or resp.get("error") or "provider returned success=false")[:500]
+
+    status_val = str(resp.get("status") or "").lower()
+    if status_val in {"error", "failed", "failure"}:
+        return str(resp.get("message") or resp.get("error") or f"provider status={status_val}")[:500]
+
+    err = resp.get("error") or resp.get("errors")
+    if err:
+        if isinstance(err, (list, tuple)):
+            return ", ".join(str(x) for x in err)[:500]
+        return str(err)[:500]
+
+    code = resp.get("code")
+    if isinstance(code, int) and code >= 400:
+        return f"provider code={code} message={resp.get('message') or ''}"[:500]
+
+    return None

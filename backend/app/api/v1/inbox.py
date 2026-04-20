@@ -193,6 +193,12 @@ def send_human_message(
         db.commit()
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"provider error: {exc}")
 
+    err_hint = _response_error(resp)
+    if err_hint is not None:
+        mark_failed(db, msg, error=err_hint)
+        db.commit()
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"provider rejected: {err_hint}")
+
     mark_sent(db, msg, provider_message_id=_first_id(resp), payload=resp)
     db.commit()
     return MessageOut.model_validate(msg)
@@ -246,6 +252,12 @@ def start_conversation(
         db.commit()
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"provider error: {exc}")
 
+    err_hint = _response_error(resp)
+    if err_hint is not None:
+        mark_failed(db, msg, error=err_hint)
+        db.commit()
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"provider rejected: {err_hint}")
+
     mark_sent(db, msg, provider_message_id=_first_id(resp), payload=resp)
     db.commit()
 
@@ -270,4 +282,24 @@ def _first_id(resp) -> str | None:
     for key in ("messageId", "id"):
         if data.get(key):
             return str(data[key])
+    return None
+
+
+def _response_error(resp) -> str | None:
+    """Short error string when AiSensy response explicitly signals failure."""
+    if not isinstance(resp, dict):
+        return None
+    if resp.get("success") is False:
+        return str(resp.get("message") or resp.get("error") or "success=false")[:300]
+    status_val = str(resp.get("status") or "").lower()
+    if status_val in {"error", "failed", "failure"}:
+        return str(resp.get("message") or resp.get("error") or f"status={status_val}")[:300]
+    err = resp.get("error") or resp.get("errors")
+    if err:
+        if isinstance(err, (list, tuple)):
+            return ", ".join(str(x) for x in err)[:300]
+        return str(err)[:300]
+    code = resp.get("code")
+    if isinstance(code, int) and code >= 400:
+        return f"code={code} {resp.get('message') or ''}"[:300]
     return None

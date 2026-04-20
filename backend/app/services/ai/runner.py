@@ -47,9 +47,45 @@ logger = get_logger("ai.runner")
 
 
 def _default_agent(db: Session) -> AgentProfile | None:
-    return db.scalar(
+    """Return the default agent profile; create a minimal one if none exist.
+
+    Without this, fresh deployments that haven't run `scripts/seed.py` would
+    silently never reply to inbound messages — a confusing "AI is dummy" state.
+    The auto-created profile is safe and uses the business name from settings.
+    """
+    agent = db.scalar(
         select(AgentProfile).where(AgentProfile.is_default.is_(True)).limit(1)
     ) or db.scalar(select(AgentProfile).order_by(AgentProfile.created_at).limit(1))
+    if agent is not None:
+        return agent
+
+    settings = get_settings()
+    biz = settings.business_name or "our team"
+    agent = AgentProfile(
+        name=f"{biz} Default Agent",
+        purpose=f"Handle customer enquiries and support for {biz} on WhatsApp.",
+        tone="warm, helpful, professional",
+        response_style="concise, 2-4 short lines, one clarifying question when needed",
+        languages_supported=["en"],
+        greeting_style=f"Hi! I'm the {biz} assistant. How can I help you today?",
+        escalation_keywords=["human", "agent", "call me", "speak to someone"],
+        forbidden_claims=[],
+        allowed_domains=[],
+        fallback_message=f"Let me connect you with someone from {biz} who can help.",
+        human_handoff_message=f"A {biz} specialist will reach out to you shortly.",
+        business_hours_behavior="respond_always",
+        instructions="Be helpful and truthful. Do not invent facts; if unsure, say you'll check and get back.",
+        is_default=True,
+    )
+    db.add(agent)
+    try:
+        db.flush()
+    except Exception:  # noqa: BLE001 — race with another worker creating one
+        db.rollback()
+        agent = db.scalar(
+            select(AgentProfile).where(AgentProfile.is_default.is_(True)).limit(1)
+        ) or db.scalar(select(AgentProfile).order_by(AgentProfile.created_at).limit(1))
+    return agent
 
 
 def _escalation_reply(agent: AgentProfile) -> str:
@@ -228,6 +264,22 @@ def handle_inbound(conversation_id: uuid.UUID, message_id: uuid.UUID) -> None:
                 db.commit()
                 return
 
+            # AiSensy may return 2xx without a messageId. Only treat as failure
+            # if the response carries an explicit error signal.
+            err_hint = _response_error(resp)
+            if err_hint is not None:
+                mark_failed(db, outbound, error=err_hint)
+                _record_ai_run(
+                    db,
+                    conversation_id=conversation_id,
+                    message_id=message_id,
+                    outcome="failed",
+                    reason=err_hint,
+                    response=reply,
+                )
+                db.commit()
+                return
+
             provider_id = _extract_provider_id(resp)
             mark_sent(db, outbound, provider_message_id=provider_id, payload=resp)
 
@@ -257,6 +309,26 @@ def _extract_provider_id(resp: dict) -> str | None:
         for key in ("messageId", "id"):
             if data.get(key):
                 return str(data[key])
+    return None
+
+
+def _response_error(resp) -> str | None:
+    """Return a short error string if AiSensy response explicitly signals failure."""
+    if not isinstance(resp, dict):
+        return None
+    if resp.get("success") is False:
+        return str(resp.get("message") or resp.get("error") or "success=false")[:300]
+    status_val = str(resp.get("status") or "").lower()
+    if status_val in {"error", "failed", "failure"}:
+        return str(resp.get("message") or resp.get("error") or f"status={status_val}")[:300]
+    err = resp.get("error") or resp.get("errors")
+    if err:
+        if isinstance(err, (list, tuple)):
+            return ", ".join(str(x) for x in err)[:300]
+        return str(err)[:300]
+    code = resp.get("code")
+    if isinstance(code, int) and code >= 400:
+        return f"code={code} {resp.get('message') or ''}"[:300]
     return None
 
 
