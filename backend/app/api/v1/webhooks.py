@@ -7,15 +7,22 @@ Two endpoints are exposed:
 
 Both persist the raw payload first (auditability) and are idempotent via
 `raw_webhook_events.dedupe_key`. Webhook signature validation is performed if
-AiSensy is configured with `AISENSY_WEBHOOK_SECRET`.
+`AISENSY_WEBHOOK_SECRET` is non-empty. The secret must match what you configure
+in AiSensy; the inbound request must include a compatible HMAC of the raw body.
+
+If you see **401 missing signature / bad signature** in production, either align
+the secret and header with AiSensy, or temporarily set `AISENSY_WEBHOOK_SECRET=`
+(empty) to disable verification while debugging (not recommended long-term).
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import hmac
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import db_dep
@@ -30,23 +37,75 @@ from app.workers.queue import enqueue_ai_reply
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 logger = get_logger("webhooks.aisensy")
 
+# Header names to try (HTTP stacks lower-case keys; Starlette uses lower-case).
+_SIGNATURE_HEADER_KEYS = (
+    "x-aisensy-signature",
+    "x-webhook-signature",
+    "x-hub-signature-256",
+    "x-signature",
+)
 
-def _validate_signature(raw_body: bytes, signature: str | None) -> None:
+
+def _extract_signature_header(request: Request) -> str | None:
+    """Best-effort: providers use different header names for the same HMAC."""
+    for key in _SIGNATURE_HEADER_KEYS:
+        v = request.headers.get(key)
+        if v:
+            return v.strip()
+    return None
+
+
+def _hmac_sha256_raw(secret: str, raw_body: bytes) -> bytes:
+    return hmac.new(secret.encode(), raw_body, hashlib.sha256).digest()
+
+
+def _signature_valid(secret: str, raw_body: bytes, given_header: str) -> bool:
+    """Accept hex or base64 digests, optional ``sha256=`` prefix (GitHub style)."""
+    given = given_header.strip()
+    if given.lower().startswith("sha256="):
+        given = given[7:].strip()
+    digest = _hmac_sha256_raw(secret, raw_body)
+    hex_expected = digest.hex()
+    given_lower = given.lower().strip()
+
+    # Hex (64 chars)
+    if len(given_lower) == 64:
+        try:
+            if hmac.compare_digest(hex_expected, given_lower):
+                return True
+        except (TypeError, ValueError):
+            pass
+
+    # Base64(raw HMAC bytes)
+    try:
+        decoded = base64.b64decode(given, validate=False)
+        if len(decoded) == 32 and hmac.compare_digest(digest, decoded):
+            return True
+    except (binascii.Error, ValueError):
+        pass
+
+    # Hex with spaces / mixed case already handled by compare_digest on hex
+    return False
+
+
+def _validate_signature(request: Request, raw_body: bytes, signature: str | None) -> None:
     settings = get_settings()
-    secret = settings.aisensy_webhook_secret
+    secret = (settings.aisensy_webhook_secret or "").strip()
     if not secret:
         return
-    # AiSensy sends an HMAC-SHA256 of the body with the configured secret.
-    # If the header is missing entirely we still accept in `local` env for
-    # developer UX, but reject in non-local.
-    if signature is None:
+
+    sig = signature or _extract_signature_header(request)
+    if sig is None:
         if settings.app_env != "local":
+            logger.warning(
+                "webhook_signature_missing",
+                path=str(request.url.path),
+                header_keys_present=[k for k in _SIGNATURE_HEADER_KEYS if request.headers.get(k)],
+            )
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing signature")
         return
-    digest = hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
-    # Accept with or without "sha256=" prefix.
-    given = signature.lower().replace("sha256=", "").strip()
-    if not hmac.compare_digest(digest, given):
+    if not _signature_valid(secret, raw_body, sig):
+        logger.warning("webhook_signature_mismatch", path=str(request.url.path))
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad signature")
 
 
@@ -65,10 +124,9 @@ def _dedupe_key(payload: dict[str, Any], kind: str) -> str:
 async def aisensy_inbound(
     request: Request,
     db: Session = Depends(db_dep),
-    x_aisensy_signature: str | None = Header(default=None),
 ) -> dict:
     raw = await request.body()
-    _validate_signature(raw, x_aisensy_signature)
+    _validate_signature(request, raw, _extract_signature_header(request))
     try:
         payload = await request.json()
     except Exception:
@@ -116,10 +174,9 @@ async def aisensy_inbound(
 async def aisensy_status(
     request: Request,
     db: Session = Depends(db_dep),
-    x_aisensy_signature: str | None = Header(default=None),
 ) -> dict:
     raw = await request.body()
-    _validate_signature(raw, x_aisensy_signature)
+    _validate_signature(request, raw, _extract_signature_header(request))
     try:
         payload = await request.json()
     except Exception:

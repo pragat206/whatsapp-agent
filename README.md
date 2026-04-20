@@ -177,7 +177,7 @@ See `.env.example` for the full list with placeholders. Summary:
 | `AISENSY_BASE_URL` | yes | Defaults to `https://backend.aisensy.com` — override if AiSensy gives a custom URL |
 | `AISENSY_CAMPAIGN_ENDPOINT` | yes | Path for campaign sends, default `/campaign/t1/api/v2` |
 | `AISENSY_SESSION_ENDPOINT` | yes | Path for session (free-form) sends, default `/direct-apis/t1/messages` |
-| `AISENSY_WEBHOOK_SECRET` | yes | Secret used to validate inbound webhook signatures |
+| `AISENSY_WEBHOOK_SECRET` | no | If set, inbound webhooks must send a matching HMAC (see troubleshooting). Empty = skip verification. |
 | `AISENSY_SOURCE` | no | Tag string sent with campaign (e.g. `terrarex-dashboard`) |
 
 ### AI provider
@@ -208,8 +208,19 @@ See `.env.example` for the full list with placeholders. Summary:
 
 Mandatory keys for a working local dev run:
 `APP_SECRET_KEY`, `DATABASE_URL`, `REDIS_URL`, `CORS_ORIGINS`,
-`AISENSY_API_KEY`, `AISENSY_WEBHOOK_SECRET`, `ANTHROPIC_API_KEY` (or
+`AISENSY_API_KEY`, `ANTHROPIC_API_KEY` (or
 `OPENAI_API_KEY`), `NEXT_PUBLIC_API_BASE_URL`.
+
+### Webhook returns 401 (`missing signature` / `bad signature`)
+
+Production uses `AISENSY_WEBHOOK_SECRET` to verify `POST /api/v1/webhooks/aisensy/*`.
+If AiSensy’s request is rejected with **401**, inbound messages never reach the database (inbox stays empty; `last_inbound_at` never updates).
+
+1. In **Railway**, set `AISENSY_WEBHOOK_SECRET` to the **exact same** secret you configured in the **AiSensy webhook URL** settings (often a string you define in both places).
+2. Redeploy or restart so the env is loaded.
+3. If AiSensy does not send a signature header at all, either enable signing in AiSensy or temporarily set `AISENSY_WEBHOOK_SECRET` to **empty** to disable verification (less secure; debugging only).
+
+Campaign sends use `AISENSY_API_KEY` and the worker queue; they do **not** depend on webhooks. If campaigns fail too, check worker logs, Redis, and template name in AiSensy.
 
 ---
 

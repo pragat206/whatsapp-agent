@@ -34,7 +34,8 @@ class Settings(BaseSettings):
     aisensy_base_url: str = "https://backend.aisensy.com"
     aisensy_campaign_endpoint: str = "/campaign/t1/api/v2"
     aisensy_session_endpoint: str = "/direct-apis/t1/messages"
-    aisensy_webhook_secret: str
+    # Empty = do not verify webhook signatures (inbound/status still work). Prefer setting a shared secret in AiSensy + Railway.
+    aisensy_webhook_secret: str = ""
     aisensy_source: str = "terrarex-dashboard"
 
     # AI
