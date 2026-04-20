@@ -58,3 +58,11 @@ class SendMessageRequest(BaseModel):
 
 class StateChangeRequest(BaseModel):
     reason: str | None = None
+
+
+class StartConversationRequest(BaseModel):
+    phone: str
+    name: str | None = None
+    body: str
+    media_url: str | None = None
+    media_type: str | None = None

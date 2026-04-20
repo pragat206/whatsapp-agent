@@ -7,8 +7,10 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from sqlalchemy import delete as sa_delete
+
 from app.api.deps import current_user, db_dep, require_roles
-from app.models.knowledge import FaqEntry, KnowledgeBase, KnowledgeDocument
+from app.models.knowledge import FaqEntry, KnowledgeBase, KnowledgeChunk, KnowledgeDocument
 from app.models.user import Role, User
 from app.schemas.common import IdResponse
 from app.schemas.kb import (
@@ -215,3 +217,49 @@ def reindex_all(
     ).all():
         enqueue_kb_reindex(doc_id)
     return IdResponse(id=kb_id)
+
+
+@router.delete("/documents/{document_id}")
+def delete_document(
+    document_id: uuid.UUID,
+    db: Session = Depends(db_dep),
+    _: User = Depends(require_roles(Role.admin)),
+) -> dict:
+    doc = db.get(KnowledgeDocument, document_id)
+    if doc is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "document not found")
+    db.execute(sa_delete(KnowledgeChunk).where(KnowledgeChunk.document_id == doc.id))
+    db.delete(doc)
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/faqs/{faq_id}")
+def delete_faq(
+    faq_id: uuid.UUID,
+    db: Session = Depends(db_dep),
+    _: User = Depends(require_roles(Role.admin)),
+) -> dict:
+    faq = db.get(FaqEntry, faq_id)
+    if faq is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "faq not found")
+    db.delete(faq)
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/{kb_id}")
+def delete_kb(
+    kb_id: uuid.UUID,
+    db: Session = Depends(db_dep),
+    _: User = Depends(require_roles(Role.admin)),
+) -> dict:
+    kb = db.get(KnowledgeBase, kb_id)
+    if kb is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "kb not found")
+    db.execute(sa_delete(KnowledgeChunk).where(KnowledgeChunk.kb_id == kb_id))
+    db.execute(sa_delete(KnowledgeDocument).where(KnowledgeDocument.kb_id == kb_id))
+    db.execute(sa_delete(FaqEntry).where(FaqEntry.kb_id == kb_id))
+    db.delete(kb)
+    db.commit()
+    return {"ok": True}

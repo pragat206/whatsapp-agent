@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import current_user, db_dep, require_roles
 from app.models.agent import AgentProfile, AgentProfileKbLink
+from app.models.knowledge import KnowledgeBase
 from app.models.user import Role, User
 from app.schemas.agent import (
     AgentProfileCreate,
@@ -16,6 +17,7 @@ from app.schemas.agent import (
     AgentProfileUpdate,
     AttachKbRequest,
 )
+from app.schemas.kb import KbOut
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
@@ -65,6 +67,26 @@ def update_agent(
         setattr(profile, k, v)
     db.commit()
     return AgentProfileOut.model_validate(profile)
+
+
+@router.get("/{agent_id}/kbs", response_model=list[KbOut])
+def list_agent_kbs(
+    agent_id: uuid.UUID,
+    db: Session = Depends(db_dep),
+    _: User = Depends(current_user),
+) -> list[KbOut]:
+    _get(db, agent_id)
+    rows = (
+        db.execute(
+            select(KnowledgeBase)
+            .join(AgentProfileKbLink, AgentProfileKbLink.kb_id == KnowledgeBase.id)
+            .where(AgentProfileKbLink.agent_profile_id == agent_id)
+            .order_by(KnowledgeBase.name)
+        )
+        .scalars()
+        .all()
+    )
+    return [KbOut.model_validate(k) for k in rows]
 
 
 @router.post("/{agent_id}/kbs", status_code=201)

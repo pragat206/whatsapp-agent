@@ -8,6 +8,7 @@ from app.db.session import SessionLocal
 from app.models.agent import AgentProfile, AgentProfileKbLink
 from app.models.knowledge import FaqEntry, KnowledgeBase, KnowledgeDocument
 from app.models.user import Role, User
+from app.services.kb.indexer import reindex_document
 
 
 DOCS = [
@@ -169,6 +170,7 @@ def seed() -> None:
             ))
 
         kb = db.scalar(select(KnowledgeBase).where(KnowledgeBase.name == "Terra Rex Core KB"))
+        seeded_doc_ids: list = []
         if kb is None:
             kb = KnowledgeBase(
                 name="Terra Rex Core KB",
@@ -177,16 +179,30 @@ def seed() -> None:
             db.add(kb)
             db.flush()
             for d in DOCS:
-                db.add(KnowledgeDocument(
+                doc = KnowledgeDocument(
                     kb_id=kb.id,
                     title=d["title"],
                     category=d["category"],
                     content=d["content"],
                     source_kind="text",
-                ))
+                )
+                db.add(doc)
+                db.flush()
+                seeded_doc_ids.append(doc.id)
             for q, a, cat in FAQS:
                 db.add(FaqEntry(kb_id=kb.id, question=q, answer=a, category=cat))
+            db.commit()
             print(f"created KB with {len(DOCS)} docs and {len(FAQS)} FAQs")
+
+            # Index synchronously so retrieval works immediately after seed.
+            # Workers may not yet be up on first deploy. Failures are non-fatal
+            # so the rest of the seed still completes.
+            for doc_id in seeded_doc_ids:
+                try:
+                    n = reindex_document(db, doc_id)
+                    print(f"indexed doc {doc_id}: {n} chunks")
+                except Exception as exc:  # noqa: BLE001
+                    print(f"indexing failed for {doc_id}: {exc}")
 
         agent = db.scalar(select(AgentProfile).where(AgentProfile.name == AGENT["name"]))
         if agent is None:
