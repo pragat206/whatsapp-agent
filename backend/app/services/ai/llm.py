@@ -45,11 +45,22 @@ class OpenAIClient:
 
     def chat(self, *, system: str, messages: list[dict], max_tokens: int = 600) -> str:
         oa_messages = [{"role": "system", "content": system}] + messages
-        resp = self._client.chat.completions.create(
-            model=self._model,
-            messages=oa_messages,
-            max_tokens=max_tokens,
-        )
+        try:
+            # Newer GPT models expect max_completion_tokens.
+            resp = self._client.chat.completions.create(
+                model=self._model,
+                messages=oa_messages,
+                max_completion_tokens=max_tokens,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Backward compatibility for models that still require max_tokens.
+            if "max_completion_tokens" not in str(exc):
+                raise
+            resp = self._client.chat.completions.create(
+                model=self._model,
+                messages=oa_messages,
+                max_tokens=max_tokens,
+            )
         return (resp.choices[0].message.content or "").strip()
 
 
