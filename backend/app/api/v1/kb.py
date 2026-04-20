@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import delete as sa_delete
 
 from app.api.deps import current_user, db_dep, require_roles
+from app.core.config import get_settings
 from app.models.knowledge import FaqEntry, KnowledgeBase, KnowledgeChunk, KnowledgeDocument
 from app.models.user import Role, User
 from app.schemas.common import IdResponse
@@ -195,6 +196,8 @@ def test_query(
     )
     hint: str | None = None
     if not chunks:
+        settings = get_settings()
+        openai_configured = bool((settings.openai_api_key or "").strip())
         n_published_docs = (
             db.scalar(
                 select(func.count())
@@ -217,14 +220,22 @@ def test_query(
                 "No published documents found. Add content, ensure “published” is on, then click Reindex."
             )
         elif n_chunks == 0:
-            hint = (
-                "No search chunks yet — click Reindex on your knowledge base. "
-                "Semantic search needs OPENAI_API_KEY in the backend environment."
-            )
+            # Zero chunks means reindex never completed or worker never ran — not necessarily missing OPENAI_API_KEY.
+            if not openai_configured:
+                hint = (
+                    "No search chunks yet. Set OPENAI_API_KEY on the backend (required to build embeddings), "
+                    "then click Reindex on your knowledge base."
+                )
+            else:
+                hint = (
+                    "No search chunks yet for your published documents. Click Reindex on that knowledge base. "
+                    "Indexing runs in a background RQ worker (same Redis + worker process as campaign jobs). "
+                    "If you already clicked Reindex, ensure the worker service is running and check worker logs for errors."
+                )
         else:
-            hint = (
-                "No chunk matched. Try words that appear in your documents, or confirm OPENAI_API_KEY is set for embedding search."
-            )
+            hint = "No chunk matched this query — try words that appear in your document text."
+            if not openai_configured:
+                hint += " For semantic search, set OPENAI_API_KEY and reindex."
 
     return KbQueryResult(
         items=[
