@@ -98,7 +98,7 @@ export default function CampaignDetail() {
     c.status === "draft"
       ? "Upload a CSV, map columns (phone required), then click Confirm mapping before Schedule or Send now."
       : c.status === "sending"
-        ? "Sending in progress — use Pause to stop."
+        ? "Sending in progress — use Pause to stop. If messages never arrive, the API only queues the job: a separate RQ worker must run (same Redis as the API). On Railway add a worker service — see backend/railway.worker.json."
         : ["completed", "cancelled", "failed"].includes(c.status)
           ? "This campaign has finished. Create a new campaign to send again."
           : !canSendOrSchedule

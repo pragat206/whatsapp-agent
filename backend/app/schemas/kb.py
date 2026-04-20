@@ -66,3 +66,4 @@ class KbQueryResultItem(BaseModel):
 
 class KbQueryResult(BaseModel):
     items: list[KbQueryResultItem]
+    hint: str | None = None

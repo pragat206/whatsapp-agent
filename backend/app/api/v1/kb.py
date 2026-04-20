@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from sqlalchemy import delete as sa_delete
@@ -193,6 +193,39 @@ def test_query(
         top_k=body.top_k,
         category=body.category,
     )
+    hint: str | None = None
+    if not chunks:
+        n_published_docs = (
+            db.scalar(
+                select(func.count())
+                .select_from(KnowledgeDocument)
+                .where(KnowledgeDocument.published.is_(True))
+            )
+            or 0
+        )
+        n_chunks = (
+            db.scalar(
+                select(func.count())
+                .select_from(KnowledgeChunk)
+                .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
+                .where(KnowledgeDocument.published.is_(True))
+            )
+            or 0
+        )
+        if n_published_docs == 0:
+            hint = (
+                "No published documents found. Add content, ensure “published” is on, then click Reindex."
+            )
+        elif n_chunks == 0:
+            hint = (
+                "No search chunks yet — click Reindex on your knowledge base. "
+                "Semantic search needs OPENAI_API_KEY in the backend environment."
+            )
+        else:
+            hint = (
+                "No chunk matched. Try words that appear in your documents, or confirm OPENAI_API_KEY is set for embedding search."
+            )
+
     return KbQueryResult(
         items=[
             KbQueryResultItem(
@@ -202,7 +235,8 @@ def test_query(
                 category=c.category,
             )
             for c in chunks
-        ]
+        ],
+        hint=hint,
     )
 
 

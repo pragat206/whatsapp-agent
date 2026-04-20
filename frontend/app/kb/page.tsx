@@ -34,6 +34,7 @@ export default function KbPage() {
   const [faqs, setFaqs] = useState<Faq[]>([]);
   const [q, setQ] = useState("");
   const [result, setResult] = useState<QueryItem[]>([]);
+  const [queryHint, setQueryHint] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -265,11 +266,12 @@ export default function KbPage() {
     if (!q.trim()) return;
     setBusy(true);
     try {
-      const r = await api<{ items: QueryItem[] }>("/kb/test-query", {
+      const r = await api<{ items: QueryItem[]; hint?: string | null }>("/kb/test-query", {
         method: "POST",
         body: JSON.stringify({ query: q, top_k: 5 })
       });
       setResult(r.items);
+      setQueryHint(r.hint ?? null);
     } catch (e) {
       report(e);
     } finally {
@@ -476,7 +478,8 @@ export default function KbPage() {
       <div className="card col" style={{ marginTop: 16 }}>
         <div style={{ fontWeight: 600 }}>Test retrieval</div>
         <div className="small muted">
-          Queries use embeddings across <strong>all published</strong> KB content.
+          Queries use embeddings across <strong>all published</strong> KB content (needs{" "}
+          <code>OPENAI_API_KEY</code> on the server). If that key is missing, a simple text match is used.
         </div>
         <div className="row">
           <input
@@ -491,6 +494,19 @@ export default function KbPage() {
             Search
           </button>
         </div>
+        {queryHint && (
+          <div
+            className="small"
+            style={{ marginTop: 8, padding: "8px 10px", borderRadius: 6, background: "#1e293b" }}
+          >
+            {queryHint}
+          </div>
+        )}
+        {result.length === 0 && !queryHint && q && !busy && (
+          <div className="muted small" style={{ marginTop: 8 }}>
+            No results — try another query or use words from your documents.
+          </div>
+        )}
         {result.map((r, i) => (
           <div key={i} className="card" style={{ marginTop: 8 }}>
             <div className="small muted">

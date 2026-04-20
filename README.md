@@ -213,14 +213,38 @@ Mandatory keys for a working local dev run:
 
 ### Webhook returns 401 (`missing signature` / `bad signature`)
 
-Production uses `AISENSY_WEBHOOK_SECRET` to verify `POST /api/v1/webhooks/aisensy/*`.
-If AiSensy’s request is rejected with **401**, inbound messages never reach the database (inbox stays empty; `last_inbound_at` never updates).
+If `AISENSY_WEBHOOK_SECRET` is **non-empty**, requests must include a matching HMAC. If AiSensy does not support a shared secret, **delete** that variable (or leave it empty) so verification is skipped.
 
-1. In **Railway**, set `AISENSY_WEBHOOK_SECRET` to the **exact same** secret you configured in the **AiSensy webhook URL** settings (often a string you define in both places).
-2. Redeploy or restart so the env is loaded.
-3. If AiSensy does not send a signature header at all, either enable signing in AiSensy or temporarily set `AISENSY_WEBHOOK_SECRET` to **empty** to disable verification (less secure; debugging only).
+If webhooks still return **401**, inbound messages never reach the database (inbox stays empty; `last_inbound_at` never updates).
 
-Campaign sends use `AISENSY_API_KEY` and the worker queue; they do **not** depend on webhooks. If campaigns fail too, check worker logs, Redis, and template name in AiSensy.
+Campaign sends use `AISENSY_API_KEY` and the **worker queue**; they do not depend on webhooks for delivery.
+
+### Campaign stuck on `sending` (no WhatsApp messages)
+
+`Send now` only **enqueues** work on Redis (`enqueue_campaign_send`). The actual sends run inside an **RQ worker** (`run_campaign_send` → `send_campaign`). If you only deploy the FastAPI container and **no worker**, the campaign stays **`sending`** and nothing is delivered.
+
+**Railway:** add a **second service** from the same backend image with start command:
+
+`rq worker -u $REDIS_URL ${RQ_QUEUE_NAME:-whatsapp-agent}`
+
+See `backend/railway.worker.json`. Use the **same** `REDIS_URL` (and queue name) as the API.
+
+Locally you need two terminals: `uvicorn …` and `rq worker -u $REDIS_URL whatsapp-agent`.
+
+### Inbox: `409` — outside 24h window
+
+Free-form inbox replies require at least one **inbound** message stored in **this** app within the last `SERVICE_WINDOW_HOURS` (default 24). That timestamp comes from webhooks (or any path that creates inbound messages). Until inbound webhooks work, use **template campaigns** for first contact; use the inbox only after the user has replied.
+
+### Dashboard looks empty vs AiSensy
+
+This product **does not** sync AiSensy’s own UI into Postgres. You only see contacts/conversations/messages here when **(a)** AiSensy **POSTs webhooks** to your deployed `/api/v1/webhooks/aisensy/inbound` (and optionally `/status`), or **(b)** you create data via this API (campaigns, manual contact, etc.).
+
+After logging in, open **Overview** on the dashboard: it calls `GET /api/v1/integrations/aisensy` and shows whether the API key is set, how many webhook events were stored, suggested webhook URLs for your current host, and short hints.
+
+### Backend / LLM / Redis checks
+
+- `GET /api/v1/integrations/system` (authenticated) — Postgres ping, Redis ping, RQ queue depth, `AI_PROVIDER` + whether the matching API key is set, optional KB embedding key, and counts of `ai_runs` (sent/failed) in the last 24h.
+- Same URL with `?probe_llm=true` runs **one minimal LLM request** (may incur a small provider charge) to verify the key and model work; the Overview dashboard has a **Test LLM call** button that uses this.
 
 ---
 
