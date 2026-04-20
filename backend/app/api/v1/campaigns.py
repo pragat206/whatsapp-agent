@@ -178,6 +178,11 @@ def schedule(
     user: User = Depends(require_roles(Role.admin, Role.campaign_manager)),
 ) -> CampaignOut:
     c = _get(db, campaign_id)
+    if c.status not in (CampaignStatus.mapped, CampaignStatus.scheduled, CampaignStatus.paused):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "schedule is only available after CSV mapping is confirmed (status must be mapped, scheduled, or paused)",
+        )
     c.scheduled_at = body.scheduled_at
     c.status = CampaignStatus.scheduled
     audit(db, action="campaign.scheduled", entity_type="campaign", entity_id=c.id, actor_user_id=user.id)
@@ -193,7 +198,31 @@ def send_now(
 ) -> CampaignOut:
     c = _get(db, campaign_id)
     if c.status not in (CampaignStatus.mapped, CampaignStatus.scheduled, CampaignStatus.paused):
-        raise HTTPException(status.HTTP_409_CONFLICT, f"cannot send from status {c.status.value}")
+        if c.status == CampaignStatus.draft:
+            msg = "campaign is in draft — upload a CSV and click Confirm mapping before sending"
+        elif c.status == CampaignStatus.sending:
+            msg = "campaign is already sending"
+        elif c.status in (CampaignStatus.completed, CampaignStatus.cancelled, CampaignStatus.failed):
+            msg = f"cannot send: campaign is {c.status.value}"
+        else:
+            msg = f"cannot send from status {c.status.value}"
+        raise HTTPException(status.HTTP_409_CONFLICT, msg)
+    pending_n = (
+        db.scalar(
+            select(func.count())
+            .select_from(CampaignRecipient)
+            .where(
+                CampaignRecipient.campaign_id == c.id,
+                CampaignRecipient.status == CampaignRecipientStatus.pending,
+            )
+        )
+        or 0
+    )
+    if pending_n == 0:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "no pending recipients — confirm CSV mapping and ensure at least one row has a valid phone number",
+        )
     c.status = CampaignStatus.sending
     c.started_at = c.started_at or dt.datetime.now(dt.timezone.utc)
     audit(db, action="campaign.send_now", entity_type="campaign", entity_id=c.id, actor_user_id=user.id)
