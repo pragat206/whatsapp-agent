@@ -36,6 +36,7 @@ export default function KbPage() {
   const [result, setResult] = useState<QueryItem[]>([]);
   const [queryHint, setQueryHint] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   // Create-KB form
@@ -58,6 +59,7 @@ export default function KbPage() {
   const [faqCat, setFaqCat] = useState("");
 
   function report(err: unknown) {
+    setInfo(null);
     setError(err instanceof Error ? err.message : String(err));
   }
 
@@ -217,7 +219,10 @@ export default function KbPage() {
     setBusy(true);
     try {
       await api(`/kb/${active.id}/reindex`, { method: "POST" });
-      setError("Reindex queued. Embeddings update in the background.");
+      setError(null);
+      setInfo(
+        "Reindex queued successfully. Embeddings update in the background; if results still do not appear after a minute, check worker logs."
+      );
     } catch (e) {
       report(e);
     } finally {
@@ -302,6 +307,18 @@ export default function KbPage() {
         >
           <div className="small">{error}</div>
           <button className="small" onClick={() => setError(null)}>
+            dismiss
+          </button>
+        </div>
+      )}
+
+      {info && (
+        <div
+          className="card"
+          style={{ borderColor: "#60a5fa", color: "#bfdbfe", marginBottom: 12 }}
+        >
+          <div className="small">{info}</div>
+          <button className="small" onClick={() => setInfo(null)}>
             dismiss
           </button>
         </div>
