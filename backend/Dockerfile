@@ -21,7 +21,7 @@ COPY app ./app
 COPY migrations ./migrations
 COPY alembic.ini ./
 COPY scripts ./scripts
-RUN chmod +x /app/scripts/start.sh
+RUN chmod +x /app/scripts/start.sh /app/scripts/start-worker.sh
 
 RUN useradd --system --uid 1001 appuser \
     && chown -R appuser:appuser /app

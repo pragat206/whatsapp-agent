@@ -223,11 +223,13 @@ Campaign sends use `AISENSY_API_KEY` and the **worker queue**; they do not depen
 
 `Send now` only **enqueues** work on Redis (`enqueue_campaign_send`). The actual sends run inside an **RQ worker** (`run_campaign_send` → `send_campaign`). If you only deploy the FastAPI container and **no worker**, the campaign stays **`sending`** and nothing is delivered.
 
-**Railway:** add a **second service** from the same backend image with start command:
+**Railway:** add a **second service** from the same backend image. The Dockerfile default runs **`start.sh`** (migrations + **Uvicorn**) — that is the **API**, not the worker. You must override **Deploy → Custom Start Command** for the worker service to:
 
-`rq worker -u $REDIS_URL ${RQ_QUEUE_NAME:-whatsapp-agent}`
+`/app/scripts/start-worker.sh`
 
-See `backend/railway.worker.json`. Use the **same** `REDIS_URL` (and queue name) as the API.
+(or equivalently: `rq worker -u $REDIS_URL ${RQ_QUEUE_NAME:-whatsapp-agent}`)
+
+If your logs show `launching uvicorn`, this service is still starting the API; fix the start command. See `backend/railway.worker.json`. Use the **same** `REDIS_URL` (and queue name) as the API, and copy the same env vars the jobs need. Disable HTTP health checks for the worker service if the image’s Dockerfile `HEALTHCHECK` curls `/healthz` (the worker does not run Uvicorn).
 
 Locally you need two terminals: `uvicorn …` and `rq worker -u $REDIS_URL whatsapp-agent`.
 
