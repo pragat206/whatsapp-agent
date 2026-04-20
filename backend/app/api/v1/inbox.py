@@ -18,9 +18,16 @@ from app.schemas.conversation import (
     ConversationSummary,
     MessageOut,
     SendMessageRequest,
+    StartConversationRequest,
     StateChangeRequest,
 )
-from app.services.conversation.repo import add_outbound_message, mark_failed, mark_sent
+from app.services.conversation.repo import (
+    add_outbound_message,
+    get_or_create_contact,
+    get_or_open_conversation,
+    mark_failed,
+    mark_sent,
+)
 from app.services.conversation.state import (
     close as close_conversation,
     pause_ai,
@@ -28,6 +35,7 @@ from app.services.conversation.state import (
     take_over,
 )
 from app.services.messaging.window import in_service_window
+from app.utils.phone import safe_normalize
 from app.utils.retries import ProviderPermanentError, ProviderTransientError
 
 router = APIRouter(prefix="/inbox", tags=["inbox"])
@@ -188,6 +196,68 @@ def send_human_message(
     mark_sent(db, msg, provider_message_id=_first_id(resp), payload=resp)
     db.commit()
     return MessageOut.model_validate(msg)
+
+
+@router.post("/start", response_model=ConversationDetail)
+def start_conversation(
+    body: StartConversationRequest,
+    db: Session = Depends(db_dep),
+    user: User = Depends(current_user),
+) -> ConversationDetail:
+    """Open a chat with a phone number from the dashboard.
+
+    If a non-closed conversation already exists, it's reused. The initial
+    message is sent as a session message (must be within 24h window if the
+    contact replied recently; otherwise AiSensy will reject it and a template
+    campaign is required).
+    """
+    phone = safe_normalize(body.phone)
+    if not phone:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid phone number")
+
+    contact = get_or_create_contact(db, phone_e164=phone, name=body.name)
+    convo = get_or_open_conversation(db, contact=contact)
+    # Dashboard-initiated = human takeover immediately.
+    if convo.state != ConversationState.HUMAN_ACTIVE:
+        take_over(db, convo, actor_user_id=user.id)
+
+    msg = add_outbound_message(
+        db,
+        conversation=convo,
+        body=body.body,
+        sender_kind="human",
+        sender_user_id=user.id,
+        media_url=body.media_url,
+        media_type=body.media_type,
+    )
+    db.commit()
+
+    try:
+        resp = get_aisensy_client().send_session_message(
+            SessionSendPayload(
+                destination=contact.phone_e164,
+                body=body.body,
+                media_url=body.media_url,
+                media_type=body.media_type,
+            )
+        )
+    except (ProviderTransientError, ProviderPermanentError) as exc:
+        mark_failed(db, msg, error=str(exc))
+        db.commit()
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"provider error: {exc}")
+
+    mark_sent(db, msg, provider_message_id=_first_id(resp), payload=resp)
+    db.commit()
+
+    convo = (
+        db.query(Conversation)
+        .options(selectinload(Conversation.contact), selectinload(Conversation.messages))
+        .filter(Conversation.id == convo.id)
+        .one()
+    )
+    detail = ConversationDetail.model_validate(convo)
+    detail.messages = [MessageOut.model_validate(m) for m in convo.messages]
+    return detail
 
 
 def _first_id(resp) -> str | None:

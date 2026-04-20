@@ -32,3 +32,7 @@ build/
 # Local data
 *.sqlite3
 pgdata/
+
+# Build artifacts
+**/tsconfig.tsbuildinfo
+frontend/package-lock.json
