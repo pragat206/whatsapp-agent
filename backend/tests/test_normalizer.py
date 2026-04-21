@@ -137,6 +137,24 @@ def test_normalize_inbound_handles_data_message_phone_without_plus():
     assert "Location share me sir" in n.text
 
 
+def test_normalize_inbound_prefers_wamid_over_envelope_id():
+    # Envelope id changes per delivery attempt; only the inner wamid correlates
+    # with outbound status callbacks, so it must win.
+    payload = {
+        "id": "envelope-id-should-not-win",
+        "data": {
+            "message": {
+                "messageId": "wamid.correct",
+                "phone_number": "919876543210",
+                "message_content": {"text": "hi"},
+            }
+        },
+    }
+    n = normalize_inbound(payload)
+    assert n is not None
+    assert n.provider_message_id == "wamid.correct"
+
+
 def test_normalize_status_maps_known_events():
     s = normalize_status({"messageId": "abc", "status": "delivered"})
     assert s is not None

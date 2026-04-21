@@ -101,18 +101,22 @@ def normalize_inbound(raw: dict[str, Any]) -> NormalizedInbound | None:
     if not sender_obj:
         sender_obj = raw.get("sender") if isinstance(raw.get("sender"), dict) else {}
 
+    # Prefer the WhatsApp `wamid` (carried on the inner message) over the
+    # webhook envelope id. The envelope id changes per delivery attempt and
+    # cannot be correlated with outbound status callbacks, while the wamid is
+    # what AiSensy references in subsequent `message.status` events.
     provider_id = (
-        raw.get("messageId")
-        or raw.get("id")
-        or raw.get("providerMessageId")
-        or msg.get("id")
+        data_msg.get("messageId")
         or msg.get("messageId")
-        or payload.get("id")
         or payload.get("messageId")
         or data.get("messageId")
-        or data.get("id")
-        or data_msg.get("messageId")
+        or raw.get("messageId")
+        or raw.get("providerMessageId")
         or data_msg.get("id")
+        or msg.get("id")
+        or payload.get("id")
+        or data.get("id")
+        or raw.get("id")
         or _dig(raw, ("data", "message", "context", "id"))
         or ""
     )
@@ -272,16 +276,18 @@ def normalize_status(raw: dict[str, Any]) -> NormalizedStatus | None:
     msg = raw.get("message") if isinstance(raw.get("message"), dict) else {}
     data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
     data_msg = data.get("message") if isinstance(data.get("message"), dict) else {}
+    # As with inbound: prefer the inner wamid over the webhook envelope id so
+    # status updates can be correlated to the originally stored message.
     provider_id = (
-        raw.get("messageId")
-        or raw.get("id")
-        or raw.get("providerMessageId")
-        or msg.get("id")
+        data_msg.get("messageId")
         or msg.get("messageId")
-        or data.get("id")
         or data.get("messageId")
-        or data_msg.get("messageId")
+        or raw.get("messageId")
+        or raw.get("providerMessageId")
         or data_msg.get("id")
+        or msg.get("id")
+        or data.get("id")
+        or raw.get("id")
         or _dig(raw, ("data", "message", "context", "id"))
     )
     if not provider_id:
