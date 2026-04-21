@@ -32,6 +32,7 @@ from app.integrations.aisensy import normalize_inbound, normalize_status
 from app.models.audit import RawWebhookEvent
 from app.services.messaging.status_processor import apply_status
 from app.services.messaging.webhook_processor import process_inbound
+from app.utils.phone import safe_normalize
 from app.workers.queue import enqueue_ai_reply
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -44,6 +45,17 @@ _SIGNATURE_HEADER_KEYS = (
     "x-hub-signature-256",
     "x-signature",
 )
+
+
+def _dig(d: dict, path: tuple[str, ...]) -> Any:
+    cur: Any = d
+    for key in path:
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(key)
+        if cur in (None, "", []):
+            return None
+    return cur
 
 
 def _extract_signature_header(request: Request) -> str | None:
@@ -127,7 +139,17 @@ def _diagnose_unnormalizable(payload: Any) -> str:
         "senderPhone", "senderPhoneNumber", "customerPhone", "whatsappNumber",
         "waNumber", "source",
     )
-    if not any(payload.get(k) for k in known_phone_fields):
+    nested_candidates = [
+        _dig(payload, ("data", "message", "phone_number")),
+        _dig(payload, ("data", "message", "phoneNumber")),
+        _dig(payload, ("data", "message", "from")),
+        _dig(payload, ("data", "message", "waId")),
+        _dig(payload, ("data", "message", "senderMobile")),
+        _dig(payload, ("data", "message", "context", "from")),
+    ]
+    top_level_present = [k for k in known_phone_fields if payload.get(k)]
+    nested_present = [str(v) for v in nested_candidates if v]
+    if not top_level_present and not nested_present:
         nested = []
         for k in ("message", "payload", "data", "sender"):
             v = payload.get(k)
@@ -135,10 +157,11 @@ def _diagnose_unnormalizable(payload: Any) -> str:
                 nested.append(f"{k}={sorted(v.keys())[:12]}")
         nested_str = f" nested[{', '.join(nested)}]" if nested else ""
         return (
-            f"no sender phone field found (looked for {list(known_phone_fields)}); "
+            f"no sender phone field found (looked for {list(known_phone_fields)} and nested data.message.*); "
             f"top-level keys were {top_keys[:20]}{nested_str}"
         )
-    return "sender field present but value was empty or not a phone number"
+    sample = (nested_present or [str(payload.get(top_level_present[0]))])[0]
+    return f"sender field present but value was not a valid phone number: {sample!r}"
 
 
 def _dedupe_key(payload: dict[str, Any], kind: str) -> str:

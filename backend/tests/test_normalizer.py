@@ -120,6 +120,23 @@ def test_normalize_inbound_handles_data_message_phone_number_shape():
     assert "Apply now" in n.text
 
 
+def test_normalize_inbound_handles_data_message_phone_without_plus():
+    payload = {
+        "id": "evt-plain-phone",
+        "data": {
+            "message": {
+                "messageId": "wamid.no.plus",
+                "phone_number": "917271037420",
+                "message_content": {"text": "Location share me sir"},
+            }
+        },
+    }
+    n = normalize_inbound(payload)
+    assert n is not None
+    assert n.from_phone_e164 == "+917271037420"
+    assert "Location share me sir" in n.text
+
+
 def test_normalize_status_maps_known_events():
     s = normalize_status({"messageId": "abc", "status": "delivered"})
     assert s is not None

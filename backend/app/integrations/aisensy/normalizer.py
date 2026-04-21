@@ -53,6 +53,31 @@ def _dig(d: dict, *paths: tuple[str, ...]) -> Any:
     return None
 
 
+def _normalize_sender_phone(raw_sender: Any) -> str | None:
+    """Best-effort normalize provider sender values to E.164.
+
+    AiSensy often sends `phone_number` as `9198...` (no leading '+').
+    """
+    if raw_sender is None:
+        return None
+    s = str(raw_sender).strip()
+    if not s:
+        return None
+
+    # Try as-is first.
+    norm = safe_normalize(s)
+    if norm:
+        return norm
+
+    # Retry with only digits and explicit '+' (common provider shape: 91xxxxxxxxxx).
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if 10 <= len(digits) <= 15:
+        norm = safe_normalize(f"+{digits}")
+        if norm:
+            return norm
+    return None
+
+
 def normalize_inbound(raw: dict[str, Any]) -> NormalizedInbound | None:
     """Convert an AiSensy inbound webhook body into NormalizedInbound.
 
@@ -125,7 +150,7 @@ def normalize_inbound(raw: dict[str, Any]) -> NormalizedInbound | None:
     sender = next((s for s in sender_candidates if s), None)
     if not sender:
         return None
-    phone_e164 = safe_normalize(str(sender))
+    phone_e164 = _normalize_sender_phone(sender)
     if not phone_e164:
         return None
 
