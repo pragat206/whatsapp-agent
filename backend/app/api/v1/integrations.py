@@ -108,6 +108,70 @@ def aisensy_test_send_campaign(
     return {"ok": True, "raw_response": resp}
 
 
+@router.post("/aisensy/probe-auth")
+def aisensy_probe_auth(
+    _: User = Depends(current_user),
+) -> dict:
+    """Probe which AiSensy credential is accepted by the direct-apis endpoint.
+
+    Makes TWO deliberately malformed requests to `/direct-apis/t1/messages`,
+    one with each configured credential as the Bearer token, and reports what
+    AiSensy says. If a token is accepted, you'll see a validation error about
+    the message body (e.g. missing `to`) rather than "Invalid Token". That
+    tells you which env var should hold which value.
+
+    No WhatsApp message is actually sent because the request body is empty.
+    """
+    import httpx
+    settings = get_settings()
+    candidates: dict[str, str] = {}
+    if (settings.aisensy_api_token or "").strip():
+        candidates["AISENSY_API_TOKEN"] = settings.aisensy_api_token.strip()
+    if (settings.aisensy_api_key or "").strip():
+        candidates["AISENSY_API_KEY"] = settings.aisensy_api_key.strip()
+    if not candidates:
+        return {"ok": False, "error": "neither AISENSY_API_TOKEN nor AISENSY_API_KEY is set"}
+
+    url = f"{settings.aisensy_base_url}{settings.aisensy_session_endpoint}"
+    results = []
+    with httpx.Client(timeout=httpx.Timeout(10.0, connect=5.0)) as c:
+        for name, token in candidates.items():
+            try:
+                r = c.post(url, json={}, headers={"Authorization": f"Bearer {token}"})
+                body = r.text[:300]
+                status = r.status_code
+                body_lc = body.lower()
+                verdict = (
+                    "invalid_token"
+                    if status == 401 or (status == 422 and "invalid token" in body_lc)
+                    else "accepted_but_bad_request" if status in (400, 422) else
+                    "ok" if status < 400 else f"other_{status}"
+                )
+            except Exception as exc:  # noqa: BLE001
+                status = None
+                body = f"{type(exc).__name__}: {exc}"[:300]
+                verdict = "network_error"
+            results.append({
+                "env_var": name,
+                "status_code": status,
+                "response_preview": body,
+                "verdict": verdict,
+            })
+    any_accepted = any(r["verdict"] == "accepted_but_bad_request" for r in results)
+    return {
+        "ok": True,
+        "probed_endpoint": url,
+        "results": results,
+        "conclusion": (
+            "At least one credential was accepted (status=422 missing-fields style); "
+            "use that env var as AISENSY_API_TOKEN for the Bearer header."
+            if any_accepted else
+            "Neither credential was accepted for /direct-apis/. Check for whitespace, "
+            "or verify the correct token type in the AiSensy dashboard."
+        ),
+    }
+
+
 @router.post("/aisensy/test-normalize")
 def aisensy_test_normalize(
     payload: dict,
