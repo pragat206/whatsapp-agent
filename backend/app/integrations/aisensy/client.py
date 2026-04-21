@@ -142,17 +142,29 @@ class AiSensyClient:
         if resp.status_code == 429:
             logger.warning("aisensy_429", body=resp.text[:500])
             raise ProviderTransientError("rate limited")
-        if resp.status_code == 401:
+        # AiSensy uses both 401 ("Unauthorized") and 422 ("Invalid Token!") to
+        # signal a bad credential — surface them with the same remediation.
+        body_lc = resp.text.lower()
+        is_bad_token = (
+            resp.status_code == 401
+            or (resp.status_code == 422 and "invalid token" in body_lc)
+        )
+        if is_bad_token:
             logger.error(
-                "aisensy_401_unauthorized",
+                "aisensy_bad_token",
                 path=path,
+                status=resp.status_code,
                 body=resp.text[:500],
                 auth_header_present=bool(token),
                 apikey_in_body=("apiKey" in body),
                 hint=(
-                    "AiSensy rejected the credential. For /direct-apis/ set AISENSY_API_TOKEN "
-                    "(or AISENSY_API_KEY) to the Bearer token from AiSensy > Manage > API Key. "
-                    "For /campaign/ the same value must match the campaign API key."
+                    "AiSensy rejected the credential. /direct-apis/ uses the Bearer "
+                    "header (AISENSY_API_TOKEN, falling back to AISENSY_API_KEY). "
+                    "/campaign/ uses the apiKey body field (AISENSY_API_KEY). "
+                    "If your AiSensy dashboard shows distinct Project API and Campaign "
+                    "API tokens, try: AISENSY_API_TOKEN=<Project API>, "
+                    "AISENSY_API_KEY=<Campaign API>. If still rejected, swap them. "
+                    "Also check for trailing whitespace/newlines in the Railway values."
                 ),
             )
             raise ProviderPermanentError(f"{resp.status_code}: {resp.text[:300]}")
