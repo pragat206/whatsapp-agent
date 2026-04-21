@@ -28,13 +28,14 @@ def _resp(status: int, payload: str | dict) -> httpx.Response:
     return httpx.Response(status, text=payload, request=req)
 
 
-def _settings() -> SimpleNamespace:
+def _settings(auth_method: str = "auto") -> SimpleNamespace:
     return SimpleNamespace(
         aisensy_base_url="https://backend.aisensy.com",
         aisensy_api_key="campaign-key",
         aisensy_api_token="project-token",
         aisensy_campaign_endpoint="/campaign/t1/api/v2",
         aisensy_session_endpoint="/direct-apis/t1/messages",
+        aisensy_auth_method=auth_method,
         aisensy_source="terrarex-dashboard",
     )
 
@@ -70,3 +71,42 @@ def test_campaign_send_uses_body_apikey_without_authorization_header() -> None:
     assert len(client._client.calls) == 1
     assert client._client.calls[0]["headers"] == {}
     assert client._client.calls[0]["json"]["apiKey"] == "campaign-key"
+
+
+def test_session_send_includes_messaging_product_whatsapp() -> None:
+    """AiSensy's /direct-apis is a WhatsApp Cloud proxy and needs messaging_product."""
+    client = AiSensyClient(settings=_settings())
+    client._client = _DummyHttpClient([_resp(200, {"success": True})])
+    client.send_session_message(SessionSendPayload(destination="+911234567890", body="hi"))
+    sent = client._client.calls[0]["json"]
+    assert sent["messaging_product"] == "whatsapp"
+    assert sent["to"] == "911234567890"
+    assert sent["type"] == "text"
+    assert sent["text"] == {"body": "hi"}
+
+
+def test_session_send_falls_back_to_project_pwd_header_after_bearer_fails() -> None:
+    """When Bearer+token and Bearer+key both fail with 401/422, try the legacy X-AiSensy-Project-API-Pwd header."""
+    client = AiSensyClient(settings=_settings())
+    client._client = _DummyHttpClient(
+        [
+            _resp(401, '{"message":"Authentication Failed!"}'),
+            _resp(401, '{"message":"Authentication Failed!"}'),
+            _resp(200, {"success": True}),
+        ]
+    )
+    out = client.send_session_message(SessionSendPayload(destination="+911234567890", body="hi"))
+    assert out["success"] is True
+    assert len(client._client.calls) == 3
+    assert client._client.calls[0]["headers"]["Authorization"] == "Bearer project-token"
+    assert client._client.calls[1]["headers"]["Authorization"] == "Bearer campaign-key"
+    assert client._client.calls[2]["headers"]["X-AiSensy-Project-API-Pwd"] == "project-token"
+
+
+def test_session_send_auth_method_pinned_to_project_pwd_skips_bearer() -> None:
+    client = AiSensyClient(settings=_settings(auth_method="project_pwd"))
+    client._client = _DummyHttpClient([_resp(200, {"success": True})])
+    client.send_session_message(SessionSendPayload(destination="+911234567890", body="hi"))
+    headers = client._client.calls[0]["headers"]
+    assert "Authorization" not in headers
+    assert headers["X-AiSensy-Project-API-Pwd"] == "project-token"

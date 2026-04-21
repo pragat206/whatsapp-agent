@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     aisensy_base_url: str = "https://backend.aisensy.com"
     aisensy_campaign_endpoint: str = "/campaign/t1/api/v2"
     aisensy_session_endpoint: str = "/direct-apis/t1/messages"
+    # How the session endpoint authenticates. `auto` (default) tries Bearer
+    # first and falls back to the legacy `X-AiSensy-Project-API-Pwd` header on
+    # 401/422. Pin to `bearer` or `project_pwd` if your AiSensy project uses a
+    # single style and you want to avoid the fallback probe.
+    aisensy_auth_method: Literal["auto", "bearer", "project_pwd"] = "auto"
     # Empty = do not verify webhook signatures (inbound/status still work). Prefer setting a shared secret in AiSensy + Railway.
     aisensy_webhook_secret: str = ""
     aisensy_source: str = "terrarex-dashboard"
