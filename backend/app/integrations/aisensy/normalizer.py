@@ -70,6 +70,7 @@ def normalize_inbound(raw: dict[str, Any]) -> NormalizedInbound | None:
     msg = raw.get("message") if isinstance(raw.get("message"), dict) else {}
     payload = raw.get("payload") if isinstance(raw.get("payload"), dict) else {}
     data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+    data_msg = data.get("message") if isinstance(data.get("message"), dict) else {}
     inner_payload = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
     sender_obj = payload.get("sender") if isinstance(payload.get("sender"), dict) else {}
     if not sender_obj:
@@ -85,6 +86,9 @@ def normalize_inbound(raw: dict[str, Any]) -> NormalizedInbound | None:
         or payload.get("messageId")
         or data.get("messageId")
         or data.get("id")
+        or data_msg.get("messageId")
+        or data_msg.get("id")
+        or _dig(raw, ("data", "message", "context", "id"))
         or ""
     )
     sender_raw_candidate = raw.get("sender") if not isinstance(raw.get("sender"), dict) else None
@@ -111,6 +115,12 @@ def normalize_inbound(raw: dict[str, Any]) -> NormalizedInbound | None:
         sender_obj.get("waId"),
         data.get("from"),
         data.get("senderMobile"),
+        data_msg.get("from"),
+        data_msg.get("waId"),
+        data_msg.get("phone_number"),
+        data_msg.get("phoneNumber"),
+        data_msg.get("senderMobile"),
+        _dig(raw, ("data", "message", "context", "from")),
     )
     sender = next((s for s in sender_candidates if s), None)
     if not sender:
@@ -127,6 +137,8 @@ def normalize_inbound(raw: dict[str, Any]) -> NormalizedInbound | None:
         or payload.get("senderName")
         or sender_obj.get("name")
         or data.get("senderName")
+        or data_msg.get("userName")
+        or data_msg.get("senderName")
     )
 
     # Text can live in `text`, `body`, `message`, or nested under payload/data.
@@ -143,6 +155,11 @@ def normalize_inbound(raw: dict[str, Any]) -> NormalizedInbound | None:
         or inner_payload.get("body")
         or data.get("text")
         or data.get("body")
+        or data_msg.get("text")
+        or data_msg.get("body")
+        or _dig(raw, ("data", "message", "message_content", "text"))
+        or _dig(raw, ("data", "message", "message_content", "body"))
+        or _dig(raw, ("data", "message", "message_content", "title"))
         or ""
     )
     if isinstance(text_val, dict):
@@ -161,6 +178,8 @@ def normalize_inbound(raw: dict[str, Any]) -> NormalizedInbound | None:
         or raw.get("mediaUrl")
         or msg.get("mediaUrl")
         or payload.get("mediaUrl")
+        or _dig(raw, ("data", "message", "media", "url"))
+        or _dig(raw, ("data", "message", "message_content", "url"))
     )
     media_type = (
         media.get("type")
@@ -169,27 +188,36 @@ def normalize_inbound(raw: dict[str, Any]) -> NormalizedInbound | None:
         or payload.get("mediaType")
         or raw.get("messageType")
         or payload.get("type")
+        or data_msg.get("message_type")
+        or _dig(raw, ("data", "message", "media", "type"))
     )
 
     received_at = _parse_ts(
         raw.get("timestamp")
         or raw.get("createdAt")
+        or raw.get("created_at")
         or raw.get("receivedAt")
         or msg.get("timestamp")
         or payload.get("timestamp")
+        or data_msg.get("sent_at")
+        or data_msg.get("created_at")
     )
 
     event_type = (raw.get("eventType") or raw.get("type") or raw.get("topic") or "").lower()
+    sender_kind = str(data_msg.get("sender") or "").upper()
     human_intervention = bool(
         raw.get("humanIntervention")
         or event_type in {"agent_reply", "human_reply", "human_intervention"}
+        or sender_kind in {"AGENT", "HUMAN"}
     )
 
     metadata = {
         "context": raw.get("context"),
-        "campaign": raw.get("campaign") or raw.get("campaignName"),
+        "campaign": raw.get("campaign") or raw.get("campaignName") or data_msg.get("campaign"),
         "eventType": event_type or None,
         "meta": raw.get("meta"),
+        "topic": raw.get("topic"),
+        "message_type": data_msg.get("message_type"),
     }
 
     return NormalizedInbound(
@@ -216,20 +244,51 @@ _STATUS_MAP = {
 
 
 def normalize_status(raw: dict[str, Any]) -> NormalizedStatus | None:
+    msg = raw.get("message") if isinstance(raw.get("message"), dict) else {}
+    data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+    data_msg = data.get("message") if isinstance(data.get("message"), dict) else {}
     provider_id = (
         raw.get("messageId")
         or raw.get("id")
         or raw.get("providerMessageId")
-        or (raw.get("message") or {}).get("id")
+        or msg.get("id")
+        or msg.get("messageId")
+        or data.get("id")
+        or data.get("messageId")
+        or data_msg.get("messageId")
+        or data_msg.get("id")
+        or _dig(raw, ("data", "message", "context", "id"))
     )
     if not provider_id:
         return None
-    status = str(raw.get("status") or raw.get("event") or "").lower()
+    status = str(
+        raw.get("status")
+        or raw.get("event")
+        or msg.get("status")
+        or data.get("status")
+        or data_msg.get("status")
+        or ""
+    ).lower()
     mapped = _STATUS_MAP.get(status, "sent" if status else "sent")
+    error_val = (
+        raw.get("error")
+        or raw.get("reason")
+        or data_msg.get("failureResponse")
+        or msg.get("error")
+    )
+    at_val = (
+        raw.get("timestamp")
+        or raw.get("at")
+        or raw.get("updatedAt")
+        or raw.get("created_at")
+        or data_msg.get("read_at")
+        or data_msg.get("delivered_at")
+        or data_msg.get("sent_at")
+    )
     return NormalizedStatus(
         provider_message_id=str(provider_id),
         status=mapped,
-        error=raw.get("error") or raw.get("reason"),
-        at=_parse_ts(raw.get("timestamp") or raw.get("at") or raw.get("updatedAt")),
+        error=str(error_val) if error_val else None,
+        at=_parse_ts(at_val),
         raw=raw,
     )

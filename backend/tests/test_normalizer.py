@@ -95,9 +95,52 @@ def test_normalize_inbound_handles_sender_object_only():
     assert n.contact_name == "Amit"
 
 
+def test_normalize_inbound_handles_data_message_phone_number_shape():
+    payload = {
+        "id": "evt-1",
+        "topic": "message.sender.user",
+        "data": {
+            "message": {
+                "id": "msg-1",
+                "messageId": "wamid.abc123",
+                "phone_number": "919795494675",
+                "userName": "Prateek Singh",
+                "message_type": "BUTTON_REPLY",
+                "message_content": {"title": "Apply now"},
+                "context": {"from": "917800011101", "id": "wamid.ctx"},
+                "sent_at": 1776749613000,
+            }
+        },
+    }
+    n = normalize_inbound(payload)
+    assert n is not None
+    assert n.from_phone_e164 == "+919795494675"
+    assert n.provider_message_id == "wamid.abc123"
+    assert n.contact_name == "Prateek Singh"
+    assert "Apply now" in n.text
+
+
 def test_normalize_status_maps_known_events():
     s = normalize_status({"messageId": "abc", "status": "delivered"})
     assert s is not None
+    assert s.status == "delivered"
+
+
+def test_normalize_status_handles_data_message_shape():
+    payload = {
+        "id": "evt-2",
+        "topic": "message.status",
+        "data": {
+            "message": {
+                "messageId": "wamid.status.1",
+                "status": "DELIVERED",
+                "delivered_at": 1776749613000,
+            }
+        },
+    }
+    s = normalize_status(payload)
+    assert s is not None
+    assert s.provider_message_id == "wamid.status.1"
     assert s.status == "delivered"
 
 
