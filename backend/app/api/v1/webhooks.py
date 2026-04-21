@@ -109,6 +109,38 @@ def _validate_signature(request: Request, raw_body: bytes, signature: str | None
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad signature")
 
 
+def _diagnose_unnormalizable(payload: Any) -> str:
+    """Best-effort human explanation of why the normalizer returned None.
+
+    The normalizer only gives up when it cannot find a sender phone number, so
+    focus on that. Returns a short string that's safe to surface in the admin
+    diagnostics list.
+    """
+    if not isinstance(payload, dict):
+        return f"payload is not a JSON object (got {type(payload).__name__})"
+    top_keys = sorted(payload.keys())
+    if not top_keys:
+        return "payload is an empty object"
+    # Surface the shape so we know which fields AiSensy actually sent.
+    known_phone_fields = (
+        "from", "waId", "mobile", "senderMobile", "senderMobileNumber",
+        "senderPhone", "senderPhoneNumber", "customerPhone", "whatsappNumber",
+        "waNumber", "source",
+    )
+    if not any(payload.get(k) for k in known_phone_fields):
+        nested = []
+        for k in ("message", "payload", "data", "sender"):
+            v = payload.get(k)
+            if isinstance(v, dict):
+                nested.append(f"{k}={sorted(v.keys())[:12]}")
+        nested_str = f" nested[{', '.join(nested)}]" if nested else ""
+        return (
+            f"no sender phone field found (looked for {list(known_phone_fields)}); "
+            f"top-level keys were {top_keys[:20]}{nested_str}"
+        )
+    return "sender field present but value was empty or not a phone number"
+
+
 def _dedupe_key(payload: dict[str, Any], kind: str) -> str:
     mid = (
         payload.get("messageId")
@@ -155,9 +187,19 @@ async def aisensy_inbound(
         return {"ok": True, "normalized": False}
 
     if normalized is None:
+        # Record exactly why we couldn't normalize so the operator can see it
+        # via /integrations/aisensy/recent-events without tailing logs.
+        reason = _diagnose_unnormalizable(payload)
+        raw_event.error = f"normalizer returned None: {reason}"[:500]
         raw_event.processed = True
         db.commit()
-        return {"ok": True, "processed": False}
+        logger.warning(
+            "inbound_unnormalizable",
+            reason=reason,
+            dedupe=dedupe,
+            keys_top=sorted([k for k in payload.keys()])[:20] if isinstance(payload, dict) else None,
+        )
+        return {"ok": True, "processed": False, "reason": reason}
 
     result = process_inbound(db, normalized)
     raw_event.processed = True
