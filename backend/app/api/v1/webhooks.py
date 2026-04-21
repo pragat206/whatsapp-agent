@@ -158,15 +158,32 @@ async def aisensy_inbound(
     db: Session = Depends(db_dep),
 ) -> dict:
     raw = await request.body()
+    logger.info(
+        "inbound_webhook_received",
+        path=str(request.url.path),
+        bytes=len(raw),
+        content_type=request.headers.get("content-type"),
+        signature_header_present=any(
+            request.headers.get(k) for k in _SIGNATURE_HEADER_KEYS
+        ),
+    )
     _validate_signature(request, raw, _extract_signature_header(request))
     try:
         payload = await request.json()
     except Exception:
+        logger.warning("inbound_invalid_json", body_preview=raw[:200].decode("utf-8", "replace"))
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid json")
+
+    if isinstance(payload, dict):
+        logger.info(
+            "inbound_payload_parsed",
+            top_level_keys=sorted(payload.keys())[:30],
+        )
 
     dedupe = _dedupe_key(payload, "inbound")
     existing = db.query(RawWebhookEvent).filter_by(dedupe_key=dedupe).first()
     if existing:
+        logger.info("inbound_dedup_hit", dedupe=dedupe)
         return {"ok": True, "dedupe": True}
 
     raw_event = RawWebhookEvent(
@@ -177,29 +194,37 @@ async def aisensy_inbound(
     )
     db.add(raw_event)
     db.commit()
+    logger.info("inbound_raw_persisted", raw_event_id=str(raw_event.id), dedupe=dedupe)
 
     try:
         normalized = normalize_inbound(payload)
     except Exception as exc:  # noqa: BLE001
-        logger.exception("normalize_failed", error=str(exc))
+        logger.exception("normalize_failed", error=str(exc), raw_event_id=str(raw_event.id))
         raw_event.error = str(exc)[:500]
         db.commit()
         return {"ok": True, "normalized": False}
 
     if normalized is None:
-        # Record exactly why we couldn't normalize so the operator can see it
-        # via /integrations/aisensy/recent-events without tailing logs.
         reason = _diagnose_unnormalizable(payload)
         raw_event.error = f"normalizer returned None: {reason}"[:500]
         raw_event.processed = True
         db.commit()
         logger.warning(
             "inbound_unnormalizable",
+            raw_event_id=str(raw_event.id),
             reason=reason,
             dedupe=dedupe,
-            keys_top=sorted([k for k in payload.keys()])[:20] if isinstance(payload, dict) else None,
         )
         return {"ok": True, "processed": False, "reason": reason}
+
+    logger.info(
+        "inbound_normalized",
+        raw_event_id=str(raw_event.id),
+        from_phone=normalized.from_phone_e164,
+        text_preview=(normalized.text or "")[:100],
+        provider_message_id=normalized.provider_message_id,
+        human_intervention=normalized.human_intervention,
+    )
 
     result = process_inbound(db, normalized)
     raw_event.processed = True
@@ -207,7 +232,19 @@ async def aisensy_inbound(
 
     if result is not None:
         conversation_id, message_id = result
+        logger.info(
+            "inbound_enqueueing_ai_reply",
+            raw_event_id=str(raw_event.id),
+            conversation_id=str(conversation_id),
+            message_id=str(message_id),
+        )
         enqueue_ai_reply(conversation_id, message_id)
+    else:
+        logger.info(
+            "inbound_no_ai_reply",
+            raw_event_id=str(raw_event.id),
+            note="conversation not in AI_ACTIVE state or processor declined",
+        )
 
     return {"ok": True}
 
