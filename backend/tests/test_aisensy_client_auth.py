@@ -1,0 +1,72 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import httpx
+
+from app.integrations.aisensy.client import AiSensyClient
+from app.integrations.aisensy.schemas import CampaignSendPayload, SessionSendPayload
+
+
+class _DummyHttpClient:
+    def __init__(self, responses: list[httpx.Response]) -> None:
+        self._responses = responses
+        self.calls: list[dict] = []
+
+    def post(self, path: str, json: dict, headers: dict | None = None) -> httpx.Response:
+        self.calls.append({"path": path, "json": json, "headers": headers or {}})
+        return self._responses.pop(0)
+
+    def close(self) -> None:
+        return None
+
+
+def _resp(status: int, payload: str | dict) -> httpx.Response:
+    req = httpx.Request("POST", "https://backend.aisensy.com/direct-apis/t1/messages")
+    if isinstance(payload, dict):
+        return httpx.Response(status, json=payload, request=req)
+    return httpx.Response(status, text=payload, request=req)
+
+
+def _settings() -> SimpleNamespace:
+    return SimpleNamespace(
+        aisensy_base_url="https://backend.aisensy.com",
+        aisensy_api_key="campaign-key",
+        aisensy_api_token="project-token",
+        aisensy_campaign_endpoint="/campaign/t1/api/v2",
+        aisensy_session_endpoint="/direct-apis/t1/messages",
+        aisensy_source="terrarex-dashboard",
+    )
+
+
+def test_session_send_retries_with_alternate_credential_on_401() -> None:
+    client = AiSensyClient(settings=_settings())
+    client._client = _DummyHttpClient(
+        [
+            _resp(401, '{"message":"Authentication Failed!"}'),
+            _resp(200, {"success": True}),
+        ]
+    )
+    out = client.send_session_message(SessionSendPayload(destination="+911234567890", body="hello"))
+    assert out["success"] is True
+    assert len(client._client.calls) == 2
+    assert client._client.calls[0]["headers"]["Authorization"] == "Bearer project-token"
+    assert client._client.calls[1]["headers"]["Authorization"] == "Bearer campaign-key"
+
+
+def test_campaign_send_uses_body_apikey_without_authorization_header() -> None:
+    client = AiSensyClient(settings=_settings())
+    client._client = _DummyHttpClient([_resp(200, {"success": True})])
+    out = client.send_campaign(
+        CampaignSendPayload(
+            campaign_name="test",
+            destination="911234567890",
+            template_params=[],
+            tags=[],
+            attributes={},
+        )
+    )
+    assert out["success"] is True
+    assert len(client._client.calls) == 1
+    assert client._client.calls[0]["headers"] == {}
+    assert client._client.calls[0]["json"]["apiKey"] == "campaign-key"

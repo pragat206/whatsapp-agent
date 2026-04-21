@@ -39,15 +39,27 @@ class AiSensyClient:
     def close(self) -> None:
         self._client.close()
 
-    def _bearer_token(self) -> str:
-        """The credential used for `Authorization: Bearer ...`.
+    def _session_auth_headers(self) -> list[dict[str, str]]:
+        """Auth header candidates for `/direct-apis/*` calls.
 
-        AiSensy's `/direct-apis/` endpoint only accepts Bearer auth — the legacy
-        `apiKey` in request body is ignored there. The `aisensy_api_token`
-        env var lets you set a distinct token, but on accounts where the same
-        credential works for both, leaving it unset falls back to the key.
+        Different AiSensy accounts expose either one token (works everywhere) or
+        separate Project/Campaign credentials. In production we also see values
+        accidentally swapped between env vars.
+
+        To make session sends resilient, try the configured credentials in a
+        deterministic order and stop on the first non-auth response:
+          1) Bearer AISENSY_API_TOKEN (if set)
+          2) Bearer AISENSY_API_KEY (if set and different)
         """
-        return (self.settings.aisensy_api_token or self.settings.aisensy_api_key or "").strip()
+        headers: list[dict[str, str]] = []
+        token = (self.settings.aisensy_api_token or "").strip()
+        key = (self.settings.aisensy_api_key or "").strip()
+        seen: set[str] = set()
+        for value in (token, key):
+            if value and value not in seen:
+                headers.append({"Authorization": f"Bearer {value}"})
+                seen.add(value)
+        return headers
 
     # ------------------------------------------------------------------
     # Outbound: campaign (templated)
@@ -111,8 +123,8 @@ class AiSensyClient:
         # Strip secrets from logs while keeping the rest of the body visible.
         loggable_body = {k: ("<redacted>" if k.lower() in {"apikey", "api_key"} else v)
                          for k, v in body.items()}
-        token = self._bearer_token()
-        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        is_session_send = path.strip() == self.settings.aisensy_session_endpoint.strip()
+        auth_candidates = self._session_auth_headers() if is_session_send else [{}]
         logger.info(
             "aisensy_request",
             path=path,
@@ -120,14 +132,32 @@ class AiSensyClient:
             campaign_name=body.get("campaignName"),
             type_=body.get("type"),
             body_keys=sorted(body.keys()),
-            auth_header_present=bool(token),
+            auth_header_present=bool(auth_candidates and auth_candidates[0].get("Authorization")),
+            auth_candidates=len(auth_candidates),
             apikey_in_body=("apiKey" in body),
         )
-        try:
-            resp = self._client.post(path, json=body, headers=headers)
-        except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout) as exc:
-            logger.warning("aisensy_transient_network", path=path, error=str(exc))
-            raise ProviderTransientError(str(exc)) from exc
+        resp: httpx.Response | None = None
+        for headers in auth_candidates:
+            try:
+                resp = self._client.post(path, json=body, headers=headers)
+            except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout) as exc:
+                logger.warning("aisensy_transient_network", path=path, error=str(exc))
+                raise ProviderTransientError(str(exc)) from exc
+            body_lc = resp.text.lower()
+            is_bad_token = (
+                resp.status_code == 401
+                or (resp.status_code == 422 and "invalid token" in body_lc)
+            )
+            # For session sends only: try next candidate on auth failure.
+            if is_session_send and is_bad_token and headers != auth_candidates[-1]:
+                logger.warning(
+                    "aisensy_session_auth_retry",
+                    path=path,
+                    status=resp.status_code,
+                )
+                continue
+            break
+        assert resp is not None
 
         logger.info(
             "aisensy_response",
@@ -155,7 +185,7 @@ class AiSensyClient:
                 path=path,
                 status=resp.status_code,
                 body=resp.text[:500],
-                auth_header_present=bool(token),
+                auth_header_present=bool(auth_candidates and auth_candidates[0].get("Authorization")),
                 apikey_in_body=("apiKey" in body),
                 hint=(
                     "AiSensy rejected the credential. /direct-apis/ uses the Bearer "
