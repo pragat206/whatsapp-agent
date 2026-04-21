@@ -117,14 +117,31 @@ def handle_inbound(conversation_id: uuid.UUID, message_id: uuid.UUID) -> None:
     """Entry point called by the RQ worker."""
     db: Session = SessionLocal()
     started = time.monotonic()
+    logger.info(
+        "ai_run_start",
+        conversation_id=str(conversation_id),
+        message_id=str(message_id),
+    )
     try:
         conversation = db.get(Conversation, conversation_id)
         message = db.get(Message, message_id)
         if conversation is None or message is None:
+            logger.warning(
+                "ai_run_missing_rows",
+                conversation_id=str(conversation_id),
+                message_id=str(message_id),
+                conversation_found=conversation is not None,
+                message_found=message is not None,
+            )
             return
 
         # (1) Pre-lock state check — quick exit if AI clearly should not run.
         if conversation.state != ConversationState.AI_ACTIVE:
+            logger.info(
+                "ai_run_skipped_state",
+                conversation_id=str(conversation_id),
+                state=conversation.state.value,
+            )
             _record_ai_run(
                 db,
                 conversation_id=conversation_id,
@@ -145,6 +162,11 @@ def handle_inbound(conversation_id: uuid.UUID, message_id: uuid.UUID) -> None:
             db.refresh(conversation)
 
             if conversation.state != ConversationState.AI_ACTIVE:
+                logger.info(
+                    "ai_run_skipped_state_post_lock",
+                    conversation_id=str(conversation_id),
+                    state=conversation.state.value,
+                )
                 _record_ai_run(
                     db,
                     conversation_id=conversation_id,
@@ -156,6 +178,12 @@ def handle_inbound(conversation_id: uuid.UUID, message_id: uuid.UUID) -> None:
                 return
 
             if not in_service_window(conversation):
+                logger.warning(
+                    "ai_run_outside_window",
+                    conversation_id=str(conversation_id),
+                    last_inbound_at=str(conversation.last_inbound_at),
+                    note="WhatsApp 24h policy: cannot send free-form reply",
+                )
                 _record_ai_run(
                     db,
                     conversation_id=conversation_id,
@@ -168,6 +196,11 @@ def handle_inbound(conversation_id: uuid.UUID, message_id: uuid.UUID) -> None:
 
             agent = _default_agent(db)
             if agent is None:
+                logger.error(
+                    "ai_run_no_agent",
+                    conversation_id=str(conversation_id),
+                    note="no default agent profile and auto-create failed",
+                )
                 _record_ai_run(
                     db,
                     conversation_id=conversation_id,
@@ -180,6 +213,13 @@ def handle_inbound(conversation_id: uuid.UUID, message_id: uuid.UUID) -> None:
 
             user_text = (message.body or "").strip()
             intent = detect_intent(user_text)
+            logger.info(
+                "ai_run_intent",
+                conversation_id=str(conversation_id),
+                user_text_preview=user_text[:200],
+                intent=intent,
+                agent_profile_id=str(agent.id),
+            )
 
             # Hard routing: unsubscribe / escalate short-circuit the LLM call.
             if intent == "unsubscribe":
@@ -244,6 +284,12 @@ def handle_inbound(conversation_id: uuid.UUID, message_id: uuid.UUID) -> None:
 
             # Send.
             client: AiSensyClient = get_aisensy_client()
+            logger.info(
+                "ai_run_calling_aisensy",
+                conversation_id=str(conversation_id),
+                destination=conversation.contact.phone_e164,
+                reply_preview=reply[:200],
+            )
             try:
                 resp = client.send_session_message(
                     SessionSendPayload(
@@ -252,6 +298,12 @@ def handle_inbound(conversation_id: uuid.UUID, message_id: uuid.UUID) -> None:
                     )
                 )
             except (ProviderTransientError, ProviderPermanentError) as exc:
+                logger.error(
+                    "ai_run_aisensy_send_exception",
+                    conversation_id=str(conversation_id),
+                    error_type=type(exc).__name__,
+                    error=str(exc)[:500],
+                )
                 mark_failed(db, outbound, error=str(exc))
                 _record_ai_run(
                     db,
@@ -268,6 +320,12 @@ def handle_inbound(conversation_id: uuid.UUID, message_id: uuid.UUID) -> None:
             # if the response carries an explicit error signal.
             err_hint = _response_error(resp)
             if err_hint is not None:
+                logger.warning(
+                    "ai_run_aisensy_response_error",
+                    conversation_id=str(conversation_id),
+                    error_hint=err_hint,
+                    response_preview=str(resp)[:300],
+                )
                 mark_failed(db, outbound, error=err_hint)
                 _record_ai_run(
                     db,
@@ -281,6 +339,12 @@ def handle_inbound(conversation_id: uuid.UUID, message_id: uuid.UUID) -> None:
                 return
 
             provider_id = _extract_provider_id(resp)
+            logger.info(
+                "ai_run_aisensy_send_ok",
+                conversation_id=str(conversation_id),
+                provider_message_id=provider_id,
+                response_keys=sorted(resp.keys())[:20] if isinstance(resp, dict) else None,
+            )
             mark_sent(db, outbound, provider_message_id=provider_id, payload=resp)
 
             _record_ai_run(

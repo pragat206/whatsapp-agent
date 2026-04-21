@@ -9,16 +9,25 @@ from rq import Queue
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
+from pydantic import BaseModel, Field
+
 from app.api.deps import current_user, db_dep
 from app.core.config import get_settings
 from app.core.redis import get_redis
-from app.integrations.aisensy import normalize_inbound
+from app.integrations.aisensy import (
+    CampaignSendPayload,
+    SessionSendPayload,
+    normalize_inbound,
+)
+from app.integrations.aisensy.client import get_aisensy_client
 from app.models.ai_run import AiRun
 from app.models.audit import RawWebhookEvent
 from app.models.contact import Contact
 from app.models.conversation import Conversation
 from app.models.user import User
 from app.services.ai.llm import get_llm
+from app.utils.phone import safe_normalize
+from app.utils.retries import ProviderPermanentError, ProviderTransientError
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
@@ -30,6 +39,73 @@ def _public_base_url(request: Request) -> str | None:
         return None
     proto = (request.headers.get("x-forwarded-proto") or "https").split(",")[0].strip()
     return f"{proto}://{host}"
+
+
+class TestSessionSendBody(BaseModel):
+    phone: str = Field(..., description="Recipient phone in any reasonable format")
+    body: str = Field("Test message from WhatsApp Agent.", description="Message body")
+
+
+class TestCampaignSendBody(BaseModel):
+    phone: str
+    template_name: str
+    template_params: list[str] = Field(default_factory=list)
+    user_name: str = ""
+
+
+@router.post("/aisensy/test-send-session")
+def aisensy_test_send_session(
+    body: TestSessionSendBody,
+    _: User = Depends(current_user),
+) -> dict:
+    """Send a real session (free-form) message to a phone via AiSensy.
+
+    Use this to verify the outbound API + key work end-to-end. The recipient
+    must have messaged you in the last 24h or AiSensy will reject the send.
+    Returns the raw AiSensy response so you can see exactly what came back.
+    """
+    phone = safe_normalize(body.phone)
+    if not phone:
+        return {"ok": False, "error": "invalid phone number"}
+    payload = SessionSendPayload(destination=phone, body=body.body)
+    try:
+        resp = get_aisensy_client().send_session_message(payload)
+    except ProviderPermanentError as exc:
+        return {"ok": False, "error_type": "permanent", "error": str(exc)}
+    except ProviderTransientError as exc:
+        return {"ok": False, "error_type": "transient", "error": str(exc)}
+    return {"ok": True, "raw_response": resp}
+
+
+@router.post("/aisensy/test-send-campaign")
+def aisensy_test_send_campaign(
+    body: TestCampaignSendBody,
+    _: User = Depends(current_user),
+) -> dict:
+    """Send one campaign-template message via AiSensy to verify template send.
+
+    The template must already be approved on AiSensy under the same name.
+    """
+    phone = safe_normalize(body.phone)
+    if not phone:
+        return {"ok": False, "error": "invalid phone number"}
+    settings = get_settings()
+    payload = CampaignSendPayload(
+        campaign_name=body.template_name,
+        destination=phone,
+        user_name=body.user_name,
+        source=settings.aisensy_source,
+        template_params=list(body.template_params),
+        tags=[],
+        attributes={},
+    )
+    try:
+        resp = get_aisensy_client().send_campaign(payload)
+    except ProviderPermanentError as exc:
+        return {"ok": False, "error_type": "permanent", "error": str(exc)}
+    except ProviderTransientError as exc:
+        return {"ok": False, "error_type": "transient", "error": str(exc)}
+    return {"ok": True, "raw_response": resp}
 
 
 @router.post("/aisensy/test-normalize")

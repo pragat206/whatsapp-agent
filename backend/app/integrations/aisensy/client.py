@@ -93,19 +93,38 @@ class AiSensyClient:
 
     # ------------------------------------------------------------------
     def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        # Strip secrets from logs while keeping the rest of the body visible.
+        loggable_body = {k: ("<redacted>" if k.lower() in {"apikey", "api_key"} else v)
+                         for k, v in body.items()}
+        logger.info(
+            "aisensy_request",
+            path=path,
+            destination=body.get("destination") or body.get("to"),
+            campaign_name=body.get("campaignName"),
+            type_=body.get("type"),
+            body_keys=sorted(body.keys()),
+        )
         try:
             resp = self._client.post(path, json=body)
         except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout) as exc:
             logger.warning("aisensy_transient_network", path=path, error=str(exc))
             raise ProviderTransientError(str(exc)) from exc
 
+        logger.info(
+            "aisensy_response",
+            path=path,
+            status=resp.status_code,
+            body_preview=resp.text[:500],
+        )
+
         if resp.status_code >= 500:
-            logger.warning("aisensy_5xx", status=resp.status_code, body=resp.text[:500])
+            logger.warning("aisensy_5xx", status=resp.status_code, body=resp.text[:500], request_body=loggable_body)
             raise ProviderTransientError(f"5xx from AiSensy: {resp.status_code}")
         if resp.status_code == 429:
+            logger.warning("aisensy_429", body=resp.text[:500])
             raise ProviderTransientError("rate limited")
         if resp.status_code >= 400:
-            logger.error("aisensy_4xx", status=resp.status_code, body=resp.text[:500])
+            logger.error("aisensy_4xx", status=resp.status_code, body=resp.text[:500], request_body=loggable_body)
             raise ProviderPermanentError(f"{resp.status_code}: {resp.text[:300]}")
 
         try:
