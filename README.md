@@ -173,7 +173,8 @@ See `.env.example` for the full list with placeholders. Summary:
 
 | Variable | Required | What it is |
 |---|---|---|
-| `AISENSY_API_KEY` | yes | AiSensy API key used for all outbound calls |
+| `AISENSY_API_KEY` | yes | Campaign API key (used in request body for `/campaign/*` sends) |
+| `AISENSY_API_TOKEN` | recommended | Project/API token used as `Authorization: Bearer ...` for `/direct-apis/*` (session replies/AI sends). If unset, backend falls back to trying `AISENSY_API_KEY`. |
 | `AISENSY_BASE_URL` | yes | Defaults to `https://backend.aisensy.com` — override if AiSensy gives a custom URL |
 | `AISENSY_CAMPAIGN_ENDPOINT` | yes | Path for campaign sends, default `/campaign/t1/api/v2` |
 | `AISENSY_SESSION_ENDPOINT` | yes | Path for session (free-form) sends, default `/direct-apis/t1/messages` |
@@ -217,7 +218,7 @@ If `AISENSY_WEBHOOK_SECRET` is **non-empty**, requests must include a matching H
 
 If webhooks still return **401**, inbound messages never reach the database (inbox stays empty; `last_inbound_at` never updates).
 
-Campaign sends use `AISENSY_API_KEY` and the **worker queue**; they do not depend on webhooks for delivery.
+Campaign sends use `AISENSY_API_KEY` and the **worker queue**; session/AI replies use `AISENSY_API_TOKEN` (or fallback credential probing) against `/direct-apis/*`.
 
 ### Campaign stuck on `sending` (no WhatsApp messages)
 
