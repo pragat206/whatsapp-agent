@@ -39,6 +39,16 @@ class AiSensyClient:
     def close(self) -> None:
         self._client.close()
 
+    def _bearer_token(self) -> str:
+        """The credential used for `Authorization: Bearer ...`.
+
+        AiSensy's `/direct-apis/` endpoint only accepts Bearer auth — the legacy
+        `apiKey` in request body is ignored there. The `aisensy_api_token`
+        env var lets you set a distinct token, but on accounts where the same
+        credential works for both, leaving it unset falls back to the key.
+        """
+        return (self.settings.aisensy_api_token or self.settings.aisensy_api_key or "").strip()
+
     # ------------------------------------------------------------------
     # Outbound: campaign (templated)
     # ------------------------------------------------------------------
@@ -74,18 +84,23 @@ class AiSensyClient:
     @with_retry()
     def send_session_message(self, payload: SessionSendPayload) -> dict[str, Any]:
         """Send a free-form reply within the service window."""
+        # AiSensy `/direct-apis/t1/messages` authenticates via
+        # `Authorization: Bearer <token>` (handled in _post). Do NOT include
+        # `apiKey` in the body — AiSensy returns 401 if the Bearer header is
+        # missing regardless of body contents.
+        to = _strip_plus(payload.destination)
         if payload.media_url:
             body: dict[str, Any] = {
-                "apiKey": self.settings.aisensy_api_key,
-                "to": payload.destination,
+                "to": to,
+                "recipient_type": "individual",
                 "type": payload.media_type or "image",
                 "media": {"url": payload.media_url},
                 "caption": payload.body,
             }
         else:
             body = {
-                "apiKey": self.settings.aisensy_api_key,
-                "to": payload.destination,
+                "to": to,
+                "recipient_type": "individual",
                 "type": "text",
                 "text": {"body": payload.body},
             }
@@ -96,6 +111,8 @@ class AiSensyClient:
         # Strip secrets from logs while keeping the rest of the body visible.
         loggable_body = {k: ("<redacted>" if k.lower() in {"apikey", "api_key"} else v)
                          for k, v in body.items()}
+        token = self._bearer_token()
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
         logger.info(
             "aisensy_request",
             path=path,
@@ -103,9 +120,11 @@ class AiSensyClient:
             campaign_name=body.get("campaignName"),
             type_=body.get("type"),
             body_keys=sorted(body.keys()),
+            auth_header_present=bool(token),
+            apikey_in_body=("apiKey" in body),
         )
         try:
-            resp = self._client.post(path, json=body)
+            resp = self._client.post(path, json=body, headers=headers)
         except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout) as exc:
             logger.warning("aisensy_transient_network", path=path, error=str(exc))
             raise ProviderTransientError(str(exc)) from exc
@@ -123,6 +142,20 @@ class AiSensyClient:
         if resp.status_code == 429:
             logger.warning("aisensy_429", body=resp.text[:500])
             raise ProviderTransientError("rate limited")
+        if resp.status_code == 401:
+            logger.error(
+                "aisensy_401_unauthorized",
+                path=path,
+                body=resp.text[:500],
+                auth_header_present=bool(token),
+                apikey_in_body=("apiKey" in body),
+                hint=(
+                    "AiSensy rejected the credential. For /direct-apis/ set AISENSY_API_TOKEN "
+                    "(or AISENSY_API_KEY) to the Bearer token from AiSensy > Manage > API Key. "
+                    "For /campaign/ the same value must match the campaign API key."
+                ),
+            )
+            raise ProviderPermanentError(f"{resp.status_code}: {resp.text[:300]}")
         if resp.status_code >= 400:
             logger.error("aisensy_4xx", status=resp.status_code, body=resp.text[:500], request_body=loggable_body)
             raise ProviderPermanentError(f"{resp.status_code}: {resp.text[:300]}")
@@ -131,6 +164,11 @@ class AiSensyClient:
             return resp.json()
         except ValueError:
             return {"raw": resp.text}
+
+
+def _strip_plus(phone: str) -> str:
+    """AiSensy direct-apis expect the destination without a leading `+`."""
+    return phone[1:] if phone.startswith("+") else phone
 
 
 _client_singleton: AiSensyClient | None = None
