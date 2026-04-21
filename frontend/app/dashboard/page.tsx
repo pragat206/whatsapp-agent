@@ -59,11 +59,47 @@ type AiSensyDiag = {
   hints: string[];
 };
 
+type RawWebhookEvent = {
+  id: string;
+  kind: string;
+  created_at: string | null;
+  processed: boolean;
+  error: string | null;
+  dedupe_key: string;
+  payload: any;
+};
+
+type RecentEvents = { count: number; events: RawWebhookEvent[] };
+
+type TestSendResult = {
+  ok: boolean;
+  raw_response?: any;
+  error?: string;
+  error_type?: string;
+};
+
 export default function Dashboard() {
   const [data, setData] = useState<Overview | null>(null);
   const [aisensy, setAisensy] = useState<AiSensyDiag | null>(null);
   const [system, setSystem] = useState<SystemDiag | null>(null);
   const [systemLoading, setSystemLoading] = useState(false);
+
+  // --- Diagnostics: test session send ---
+  const [sessPhone, setSessPhone] = useState("");
+  const [sessBody, setSessBody] = useState("Test from WhatsApp Agent");
+  const [sessBusy, setSessBusy] = useState(false);
+  const [sessResult, setSessResult] = useState<TestSendResult | null>(null);
+
+  // --- Diagnostics: test template send ---
+  const [tmplPhone, setTmplPhone] = useState("");
+  const [tmplName, setTmplName] = useState("");
+  const [tmplParams, setTmplParams] = useState("");
+  const [tmplBusy, setTmplBusy] = useState(false);
+  const [tmplResult, setTmplResult] = useState<TestSendResult | null>(null);
+
+  // --- Diagnostics: recent webhooks ---
+  const [recentBusy, setRecentBusy] = useState(false);
+  const [recent, setRecent] = useState<RecentEvents | null>(null);
 
   async function loadSystem(probeLlm: boolean) {
     setSystemLoading(true);
@@ -74,6 +110,69 @@ export default function Dashboard() {
       alert(e instanceof Error ? e.message : String(e));
     } finally {
       setSystemLoading(false);
+    }
+  }
+
+  async function testSendSession() {
+    if (!sessPhone.trim() || !sessBody.trim() || sessBusy) return;
+    setSessBusy(true);
+    setSessResult(null);
+    try {
+      const r = await api<TestSendResult>(
+        "/integrations/aisensy/test-send-session",
+        {
+          method: "POST",
+          body: JSON.stringify({ phone: sessPhone.trim(), body: sessBody })
+        }
+      );
+      setSessResult(r);
+    } catch (e) {
+      setSessResult({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setSessBusy(false);
+    }
+  }
+
+  async function testSendCampaign() {
+    if (!tmplPhone.trim() || !tmplName.trim() || tmplBusy) return;
+    setTmplBusy(true);
+    setTmplResult(null);
+    try {
+      const params = tmplParams
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const r = await api<TestSendResult>(
+        "/integrations/aisensy/test-send-campaign",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            phone: tmplPhone.trim(),
+            template_name: tmplName.trim(),
+            template_params: params
+          })
+        }
+      );
+      setTmplResult(r);
+    } catch (e) {
+      setTmplResult({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setTmplBusy(false);
+    }
+  }
+
+  async function loadRecentWebhooks() {
+    setRecentBusy(true);
+    try {
+      setRecent(
+        await api<RecentEvents>(
+          "/integrations/aisensy/recent-events?kind=inbound&limit=10"
+        )
+      );
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRecentBusy(false);
     }
   }
 
@@ -204,6 +303,179 @@ export default function Dashboard() {
           )}
         </div>
       )}
+
+      <div className="card col" style={{ marginTop: 16, maxWidth: 900 }}>
+        <div style={{ fontWeight: 600 }}>AiSensy diagnostics</div>
+        <p className="small muted" style={{ marginTop: 4 }}>
+          Send real test messages and inspect raw inbound webhooks. Costs apply for
+          actual sends.
+        </p>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 12,
+            marginTop: 8
+          }}
+        >
+          {/* Session send */}
+          <div className="col" style={{ gap: 6 }}>
+            <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>
+              Test session send (24h window)
+            </div>
+            <input
+              placeholder="Phone (+919876543210)"
+              value={sessPhone}
+              onChange={(e) => setSessPhone(e.target.value)}
+            />
+            <input
+              placeholder="Body"
+              value={sessBody}
+              onChange={(e) => setSessBody(e.target.value)}
+            />
+            <button
+              type="button"
+              className="primary"
+              disabled={sessBusy || !sessPhone.trim() || !sessBody.trim()}
+              onClick={testSendSession}
+            >
+              {sessBusy ? "Sending…" : "Send test message"}
+            </button>
+            {sessResult && (
+              <pre
+                className="small"
+                style={{
+                  whiteSpace: "pre-wrap",
+                  background: "#0b0f14",
+                  padding: 8,
+                  borderRadius: 6,
+                  color: sessResult.ok ? "#86efac" : "#fca5a5",
+                  maxHeight: 180,
+                  overflow: "auto"
+                }}
+              >
+                {JSON.stringify(sessResult, null, 2)}
+              </pre>
+            )}
+          </div>
+
+          {/* Template send */}
+          <div className="col" style={{ gap: 6 }}>
+            <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>
+              Test template send (cold outreach)
+            </div>
+            <input
+              placeholder="Phone (+919876543210)"
+              value={tmplPhone}
+              onChange={(e) => setTmplPhone(e.target.value)}
+            />
+            <input
+              placeholder="Template name (e.g. affiliated_sales)"
+              value={tmplName}
+              onChange={(e) => setTmplName(e.target.value)}
+            />
+            <input
+              placeholder="Template params, comma-separated (optional)"
+              value={tmplParams}
+              onChange={(e) => setTmplParams(e.target.value)}
+            />
+            <button
+              type="button"
+              className="primary"
+              disabled={tmplBusy || !tmplPhone.trim() || !tmplName.trim()}
+              onClick={testSendCampaign}
+            >
+              {tmplBusy ? "Sending…" : "Send test template"}
+            </button>
+            {tmplResult && (
+              <pre
+                className="small"
+                style={{
+                  whiteSpace: "pre-wrap",
+                  background: "#0b0f14",
+                  padding: 8,
+                  borderRadius: 6,
+                  color: tmplResult.ok ? "#86efac" : "#fca5a5",
+                  maxHeight: 180,
+                  overflow: "auto"
+                }}
+              >
+                {JSON.stringify(tmplResult, null, 2)}
+              </pre>
+            )}
+          </div>
+        </div>
+
+        <div style={{ marginTop: 12 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              flexWrap: "wrap"
+            }}
+          >
+            <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>
+              Recent inbound webhooks
+            </div>
+            <button
+              type="button"
+              disabled={recentBusy}
+              onClick={loadRecentWebhooks}
+            >
+              {recentBusy ? "Loading…" : "Fetch last 10"}
+            </button>
+            <span className="small muted">
+              Use this to see exactly what AiSensy is POSTing to your webhook URL.
+            </span>
+          </div>
+          {recent && (
+            <div className="col" style={{ marginTop: 8, gap: 6 }}>
+              {recent.events.length === 0 && (
+                <div className="muted small">
+                  No inbound webhook events stored. Either AiSensy is not pointing
+                  at this server, or the URL is wrong.
+                </div>
+              )}
+              {recent.events.map((ev) => (
+                <details
+                  key={ev.id}
+                  style={{
+                    background: "#0b0f14",
+                    padding: 8,
+                    borderRadius: 6
+                  }}
+                >
+                  <summary
+                    style={{
+                      cursor: "pointer",
+                      fontSize: "0.82rem",
+                      color: ev.error ? "#fca5a5" : "var(--text)"
+                    }}
+                  >
+                    {ev.created_at} · {ev.kind} ·{" "}
+                    {ev.processed ? "processed" : "unprocessed"}
+                    {ev.error ? ` · error: ${ev.error}` : ""}
+                  </summary>
+                  <pre
+                    className="small"
+                    style={{
+                      whiteSpace: "pre-wrap",
+                      marginTop: 6,
+                      maxHeight: 320,
+                      overflow: "auto"
+                    }}
+                  >
+                    {JSON.stringify(ev.payload, null, 2)}
+                  </pre>
+                </details>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginTop: 16 }}>
         <Card title="Active conversations" value={data?.active_conversations ?? "—"} />
         <Card title="Takeovers (24h)" value={data?.takeovers_last_24h ?? "—"} />
