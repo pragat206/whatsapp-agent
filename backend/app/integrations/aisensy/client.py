@@ -42,24 +42,45 @@ class AiSensyClient:
     def _session_auth_headers(self) -> list[dict[str, str]]:
         """Auth header candidates for `/direct-apis/*` calls.
 
-        Different AiSensy accounts expose either one token (works everywhere) or
-        separate Project/Campaign credentials. In production we also see values
-        accidentally swapped between env vars.
+        AiSensy has shipped two auth styles over time:
+          * `Authorization: Bearer <token>` — modern direct-apis projects
+          * `X-AiSensy-Project-API-Pwd: <password>` — legacy Project API projects
 
-        To make session sends resilient, try the configured credentials in a
-        deterministic order and stop on the first non-auth response:
-          1) Bearer AISENSY_API_TOKEN (if set)
-          2) Bearer AISENSY_API_KEY (if set and different)
+        Different AiSensy accounts also expose either one token (works
+        everywhere) or separate Project/Campaign credentials, and we
+        occasionally see values swapped between env vars.
+
+        The candidate list is ordered so the most likely combination runs
+        first. On auth failure (`401` or `422 invalid token`) the caller keeps
+        walking the list. `AISENSY_AUTH_METHOD` pins the style when a project
+        is known to use only one.
         """
-        headers: list[dict[str, str]] = []
         token = (self.settings.aisensy_api_token or "").strip()
         key = (self.settings.aisensy_api_key or "").strip()
+        values: list[str] = []
         seen: set[str] = set()
         for value in (token, key):
             if value and value not in seen:
-                headers.append({"Authorization": f"Bearer {value}"})
+                values.append(value)
                 seen.add(value)
-        return headers
+
+        method = (getattr(self.settings, "aisensy_auth_method", "auto") or "auto").lower()
+        styles: list[str]
+        if method == "bearer":
+            styles = ["bearer"]
+        elif method == "project_pwd":
+            styles = ["project_pwd"]
+        else:
+            styles = ["bearer", "project_pwd"]
+
+        candidates: list[dict[str, str]] = []
+        for style in styles:
+            for value in values:
+                if style == "bearer":
+                    candidates.append({"Authorization": f"Bearer {value}"})
+                else:
+                    candidates.append({"X-AiSensy-Project-API-Pwd": value})
+        return candidates
 
     # ------------------------------------------------------------------
     # Outbound: campaign (templated)
@@ -96,21 +117,27 @@ class AiSensyClient:
     @with_retry()
     def send_session_message(self, payload: SessionSendPayload) -> dict[str, Any]:
         """Send a free-form reply within the service window."""
-        # AiSensy `/direct-apis/t1/messages` authenticates via
-        # `Authorization: Bearer <token>` (handled in _post). Do NOT include
-        # `apiKey` in the body — AiSensy returns 401 if the Bearer header is
-        # missing regardless of body contents.
+        # AiSensy `/direct-apis/t1/messages` is a thin proxy over WhatsApp
+        # Cloud API — it expects the Cloud API body shape including
+        # `messaging_product: "whatsapp"`. Omitting it causes AiSensy to
+        # return 400/422. Authentication is a header (handled in _post);
+        # do NOT include `apiKey` in the body for direct-apis.
         to = _strip_plus(payload.destination)
         if payload.media_url:
+            media_type = payload.media_type or "image"
             body: dict[str, Any] = {
+                "messaging_product": "whatsapp",
                 "to": to,
                 "recipient_type": "individual",
-                "type": payload.media_type or "image",
-                "media": {"url": payload.media_url},
-                "caption": payload.body,
+                "type": media_type,
+                media_type: {
+                    "link": payload.media_url,
+                    **({"caption": payload.body} if payload.body else {}),
+                },
             }
         else:
             body = {
+                "messaging_product": "whatsapp",
                 "to": to,
                 "recipient_type": "individual",
                 "type": "text",
@@ -125,6 +152,7 @@ class AiSensyClient:
                          for k, v in body.items()}
         is_session_send = path.strip() == self.settings.aisensy_session_endpoint.strip()
         auth_candidates = self._session_auth_headers() if is_session_send else [{}]
+        auth_styles = [_header_style_label(h) for h in auth_candidates]
         logger.info(
             "aisensy_request",
             path=path,
@@ -132,12 +160,14 @@ class AiSensyClient:
             campaign_name=body.get("campaignName"),
             type_=body.get("type"),
             body_keys=sorted(body.keys()),
-            auth_header_present=bool(auth_candidates and auth_candidates[0].get("Authorization")),
             auth_candidates=len(auth_candidates),
+            auth_styles=auth_styles,
             apikey_in_body=("apiKey" in body),
         )
         resp: httpx.Response | None = None
+        used_headers: dict[str, str] = {}
         for headers in auth_candidates:
+            used_headers = headers
             try:
                 resp = self._client.post(path, json=body, headers=headers)
             except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout) as exc:
@@ -154,6 +184,7 @@ class AiSensyClient:
                     "aisensy_session_auth_retry",
                     path=path,
                     status=resp.status_code,
+                    tried_style=_header_style_label(headers),
                 )
                 continue
             break
@@ -185,16 +216,19 @@ class AiSensyClient:
                 path=path,
                 status=resp.status_code,
                 body=resp.text[:500],
-                auth_header_present=bool(auth_candidates and auth_candidates[0].get("Authorization")),
+                last_auth_style=_header_style_label(used_headers),
+                auth_styles_tried=auth_styles,
                 apikey_in_body=("apiKey" in body),
                 hint=(
-                    "AiSensy rejected the credential. /direct-apis/ uses the Bearer "
-                    "header (AISENSY_API_TOKEN, falling back to AISENSY_API_KEY). "
-                    "/campaign/ uses the apiKey body field (AISENSY_API_KEY). "
-                    "If your AiSensy dashboard shows distinct Project API and Campaign "
-                    "API tokens, try: AISENSY_API_TOKEN=<Project API>, "
-                    "AISENSY_API_KEY=<Campaign API>. If still rejected, swap them. "
-                    "Also check for trailing whitespace/newlines in the Railway values."
+                    "AiSensy rejected every configured credential for /direct-apis/. "
+                    "This endpoint authenticates via a header — Bearer `AISENSY_API_TOKEN` "
+                    "(newer projects) or `X-AiSensy-Project-API-Pwd` (legacy). Both are "
+                    "auto-tried unless AISENSY_AUTH_METHOD is pinned. Campaign sends use "
+                    "AISENSY_API_KEY in the body — that is a DIFFERENT value in most "
+                    "accounts. Fix: open AiSensy dashboard → Manage → API Key, copy the "
+                    "token shown for direct-apis / project API into AISENSY_API_TOKEN, "
+                    "and the campaign API key into AISENSY_API_KEY. Check for trailing "
+                    "whitespace/newlines in Railway env values."
                 ),
             )
             raise ProviderPermanentError(f"{resp.status_code}: {resp.text[:300]}")
@@ -211,6 +245,17 @@ class AiSensyClient:
 def _strip_plus(phone: str) -> str:
     """AiSensy direct-apis expect the destination without a leading `+`."""
     return phone[1:] if phone.startswith("+") else phone
+
+
+def _header_style_label(headers: dict[str, str]) -> str:
+    """Short name for the auth style in a candidate header map (for logs)."""
+    if not headers:
+        return "none"
+    if "Authorization" in headers:
+        return "bearer"
+    if "X-AiSensy-Project-API-Pwd" in headers:
+        return "project_pwd"
+    return ",".join(sorted(headers.keys()))
 
 
 _client_singleton: AiSensyClient | None = None
