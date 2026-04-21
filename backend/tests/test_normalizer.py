@@ -48,6 +48,53 @@ def test_normalize_inbound_handles_nested_message():
     assert n.text == "hello"
 
 
+def test_normalize_inbound_handles_aisensy_sender_mobile():
+    """AiSensy `message.sender.user` topic typically carries `senderMobile`."""
+    payload = {
+        "messageId": "wamid.abc",
+        "senderMobile": "+919876543210",
+        "senderName": "Rajesh",
+        "messageType": "text",
+        "text": "Hi, interested in solar",
+        "timestamp": 1713456789,
+    }
+    n = normalize_inbound(payload)
+    assert n is not None
+    assert n.from_phone_e164 == "+919876543210"
+    assert n.contact_name == "Rajesh"
+    assert "solar" in n.text
+
+
+def test_normalize_inbound_handles_nested_payload_shape():
+    """Some AiSensy payloads nest the body under `payload.source`/`payload.text`."""
+    payload = {
+        "type": "message",
+        "payload": {
+            "source": "+919876543210",
+            "type": "text",
+            "text": "hello there",
+            "sender": {"name": "Neha", "phone": "+919876543210"},
+        },
+    }
+    n = normalize_inbound(payload)
+    assert n is not None
+    assert n.from_phone_e164 == "+919876543210"
+    assert n.contact_name == "Neha"
+    assert n.text == "hello there"
+
+
+def test_normalize_inbound_handles_sender_object_only():
+    payload = {
+        "messageId": "m1",
+        "sender": {"phone": "+919876543210", "name": "Amit"},
+        "text": "yo",
+    }
+    n = normalize_inbound(payload)
+    assert n is not None
+    assert n.from_phone_e164 == "+919876543210"
+    assert n.contact_name == "Amit"
+
+
 def test_normalize_status_maps_known_events():
     s = normalize_status({"messageId": "abc", "status": "delivered"})
     assert s is not None

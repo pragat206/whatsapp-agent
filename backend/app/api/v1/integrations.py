@@ -31,6 +31,45 @@ def _public_base_url(request: Request) -> str | None:
     return f"{proto}://{host}"
 
 
+@router.get("/aisensy/recent-events")
+def aisensy_recent_events(
+    limit: int = Query(10, ge=1, le=50),
+    kind: str | None = Query(None, description="inbound | status"),
+    db: Session = Depends(db_dep),
+    _: User = Depends(current_user),
+) -> dict:
+    """Return the last N raw AiSensy webhook payloads.
+
+    Critical for diagnosing "inbound webhooks arriving but no conversations":
+    the real payload shape is visible here and the normalizer field paths can
+    be adjusted to match.
+    """
+    stmt = (
+        select(RawWebhookEvent)
+        .where(RawWebhookEvent.provider == "aisensy")
+        .order_by(RawWebhookEvent.created_at.desc())
+        .limit(limit)
+    )
+    if kind:
+        stmt = stmt.where(RawWebhookEvent.kind == kind)
+    rows = db.execute(stmt).scalars().all()
+    return {
+        "count": len(rows),
+        "events": [
+            {
+                "id": str(r.id),
+                "kind": r.kind,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "processed": r.processed,
+                "error": r.error,
+                "dedupe_key": r.dedupe_key,
+                "payload": r.payload,
+            }
+            for r in rows
+        ],
+    }
+
+
 @router.get("/aisensy")
 def aisensy_diagnostics(
     request: Request,
@@ -91,6 +130,17 @@ def aisensy_diagnostics(
     if inbound_normalize_errors:
         hints.append(
             f"{inbound_normalize_errors} inbound webhook(s) stored but normalization failed — check backend logs for normalize_failed; payload shape may need an update in integrations/aisensy/normalizer.py."
+        )
+    # Webhooks arriving but no conversation rows = topic/field mismatch, not
+    # normalizer error (normalizer returned None silently because no phone
+    # could be extracted). Tell the user exactly where to look.
+    if inbound_total > 0 and convos_n == 0:
+        hints.append(
+            "Inbound webhook events are stored but no conversations were created. "
+            "This usually means AiSensy's payload fields (phone, text) did not match "
+            f"any path the normalizer knows. Inspect the raw payload via "
+            f"GET /api/v1/integrations/aisensy/recent-events?kind=inbound and extend "
+            "backend/app/integrations/aisensy/normalizer.py if needed."
         )
     if contacts_n == 0 and convos_n == 0 and inbound_total == 0:
         hints.append(
