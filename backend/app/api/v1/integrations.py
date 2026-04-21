@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import current_user, db_dep
 from app.core.config import get_settings
 from app.core.redis import get_redis
+from app.integrations.aisensy import normalize_inbound
 from app.models.ai_run import AiRun
 from app.models.audit import RawWebhookEvent
 from app.models.contact import Contact
@@ -29,6 +30,41 @@ def _public_base_url(request: Request) -> str | None:
         return None
     proto = (request.headers.get("x-forwarded-proto") or "https").split(",")[0].strip()
     return f"{proto}://{host}"
+
+
+@router.post("/aisensy/test-normalize")
+def aisensy_test_normalize(
+    payload: dict,
+    _: User = Depends(current_user),
+) -> dict:
+    """Dry-run the AiSensy inbound normalizer against any payload.
+
+    Use this to debug a webhook shape without sending a real WhatsApp message.
+    Returns the parsed NormalizedInbound fields or the reason parsing failed.
+    """
+    try:
+        n = normalize_inbound(payload)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    if n is None:
+        return {
+            "ok": False,
+            "error": "normalizer returned None (no sender phone extractable)",
+            "input_keys": sorted(payload.keys()) if isinstance(payload, dict) else None,
+        }
+    return {
+        "ok": True,
+        "normalized": {
+            "provider_message_id": n.provider_message_id,
+            "from_phone_e164": n.from_phone_e164,
+            "contact_name": n.contact_name,
+            "text": n.text,
+            "media_url": n.media_url,
+            "media_type": n.media_type,
+            "received_at": n.received_at.isoformat() if n.received_at else None,
+            "human_intervention": n.human_intervention,
+        },
+    }
 
 
 @router.get("/aisensy/recent-events")
