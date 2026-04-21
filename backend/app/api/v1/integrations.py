@@ -191,6 +191,7 @@ def aisensy_diagnostics(
     """Explains why the dashboard may show no AiSensy data: this app mirrors webhooks + API sends into Postgres."""
     settings = get_settings()
     api_key_set = bool((settings.aisensy_api_key or "").strip())
+    api_token_set = bool((settings.aisensy_api_token or "").strip())
     webhook_sig_on = bool((settings.aisensy_webhook_secret or "").strip())
 
     since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=24)
@@ -266,6 +267,8 @@ def aisensy_diagnostics(
         ),
         "config": {
             "aisensy_api_key_configured": api_key_set,
+            "aisensy_api_token_configured": api_token_set,
+            "aisensy_bearer_source": "AISENSY_API_TOKEN" if api_token_set else ("AISENSY_API_KEY" if api_key_set else None),
             "aisensy_base_url": settings.aisensy_base_url,
             "aisensy_campaign_endpoint": settings.aisensy_campaign_endpoint,
             "aisensy_session_endpoint": settings.aisensy_session_endpoint,

@@ -31,6 +31,10 @@ class Settings(BaseSettings):
 
     # AiSensy
     aisensy_api_key: str
+    # Bearer token for the `/direct-apis/` endpoint. If unset, falls back to
+    # `aisensy_api_key` — AiSensy's newer dashboards issue a single credential
+    # that works for both campaign v2 (in body) and direct-apis (as Bearer).
+    aisensy_api_token: str = ""
     aisensy_base_url: str = "https://backend.aisensy.com"
     aisensy_campaign_endpoint: str = "/campaign/t1/api/v2"
     aisensy_session_endpoint: str = "/direct-apis/t1/messages"
