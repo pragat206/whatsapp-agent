@@ -31,13 +31,25 @@ logger = get_logger("aisensy.client")
 class AiSensyClient:
     def __init__(self, settings=None) -> None:
         self.settings = settings or get_settings()
+        # No base_url — every call passes an absolute URL so we can talk to
+        # both `apis.aisensy.com` (session) and `backend.aisensy.com` (campaign).
         self._client = httpx.Client(
-            base_url=self.settings.aisensy_base_url,
             timeout=httpx.Timeout(15.0, connect=5.0),
         )
 
     def close(self) -> None:
         self._client.close()
+
+    def _campaign_base_url(self) -> str:
+        # Fall back to aisensy_base_url for older deployments that haven't set
+        # the split campaign base URL yet.
+        return (
+            getattr(self.settings, "aisensy_campaign_base_url", "")
+            or self.settings.aisensy_base_url
+        ).rstrip("/")
+
+    def _session_base_url(self) -> str:
+        return self.settings.aisensy_base_url.rstrip("/")
 
     def _session_auth_headers(self) -> list[dict[str, str]]:
         """Auth header candidates for `/direct-apis/*` calls.
@@ -109,7 +121,8 @@ class AiSensyClient:
                 "filename": payload.media.filename or "",
             }
 
-        return self._post(self.settings.aisensy_campaign_endpoint, body)
+        url = f"{self._campaign_base_url()}{self.settings.aisensy_campaign_endpoint}"
+        return self._post(url, body)
 
     # ------------------------------------------------------------------
     # Outbound: session (free-form, 24h window)
@@ -143,14 +156,40 @@ class AiSensyClient:
                 "type": "text",
                 "text": {"body": payload.body},
             }
-        return self._post(self.settings.aisensy_session_endpoint, body)
+        url = f"{self._session_base_url()}{self._resolved_session_path()}"
+        return self._post(url, body)
+
+    def _resolved_session_path(self) -> str:
+        """Interpolate `{project_id}` in the session endpoint, if present.
+
+        AiSensy's Project API v1 path is
+        `/project-apis/v1/project/{project_id}/messages`. The Direct APIs path
+        is static (`/direct-apis/t1/messages`) and returned unchanged.
+        """
+        path = self.settings.aisensy_session_endpoint
+        if "{project_id}" not in path:
+            return path
+        project_id = (getattr(self.settings, "aisensy_project_id", "") or "").strip()
+        if not project_id:
+            raise ProviderPermanentError(
+                "AISENSY_SESSION_ENDPOINT contains {project_id} but "
+                "AISENSY_PROJECT_ID is not set. Copy the project id from "
+                "AiSensy dashboard > Project API Keys and set it in Railway."
+            )
+        return path.replace("{project_id}", project_id)
 
     # ------------------------------------------------------------------
     def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         # Strip secrets from logs while keeping the rest of the body visible.
         loggable_body = {k: ("<redacted>" if k.lower() in {"apikey", "api_key"} else v)
                          for k, v in body.items()}
-        is_session_send = path.strip() == self.settings.aisensy_session_endpoint.strip()
+        # The caller passes a full URL; classify session vs. campaign by it.
+        # Compare against the resolved session path (with {project_id} substituted).
+        try:
+            resolved_session_url = f"{self._session_base_url()}{self._resolved_session_path()}"
+        except ProviderPermanentError:
+            resolved_session_url = f"{self._session_base_url()}{self.settings.aisensy_session_endpoint}"
+        is_session_send = path.strip() == resolved_session_url.strip()
         auth_candidates = self._session_auth_headers() if is_session_send else [{}]
         auth_styles = [_header_style_label(h) for h in auth_candidates]
         logger.info(

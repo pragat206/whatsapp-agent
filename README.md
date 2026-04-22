@@ -173,26 +173,33 @@ See `.env.example` for the full list with placeholders. Summary:
 
 | Variable | Required | What it is |
 |---|---|---|
-| `AISENSY_API_KEY` | yes | Campaign API key (used in request body for `/campaign/*` sends) |
-| `AISENSY_API_TOKEN` | recommended | Direct/Project API token sent in the auth header for `/direct-apis/*` (session replies, AI replies, human inbox replies). If unset, backend falls back to trying `AISENSY_API_KEY`. |
+| `AISENSY_API_KEY` | yes | Campaign API key (used in request body for `/campaign/*` sends). Copy from the "API Campaign Key" tab in AiSensy. |
+| `AISENSY_API_TOKEN` | recommended | Project API key/password sent in the auth header for session sends (AI replies + human replies from the inbox). Copy from the "Project API Keys" tab. If unset, backend falls back to trying `AISENSY_API_KEY`. |
+| `AISENSY_PROJECT_ID` | **required for Project API v1** | Project id shown on the "Project API Keys" tab. Interpolated into `AISENSY_SESSION_ENDPOINT` wherever `{project_id}` appears. |
 | `AISENSY_AUTH_METHOD` | no | `auto` (default) tries `Authorization: Bearer` then `X-AiSensy-Project-API-Pwd`. Pin to `bearer` or `project_pwd` once you know which one your AiSensy project accepts. |
-| `AISENSY_BASE_URL` | yes | Defaults to `https://backend.aisensy.com` — override if AiSensy gives a custom URL |
+| `AISENSY_BASE_URL` | yes | Base URL for the session endpoint. Project API v1 → `https://apis.aisensy.com` (default). Legacy Direct APIs → `https://backend.aisensy.com`. |
+| `AISENSY_CAMPAIGN_BASE_URL` | no | Base URL for campaign sends (default `https://backend.aisensy.com` — the campaign host is separate from the session host). |
 | `AISENSY_CAMPAIGN_ENDPOINT` | yes | Path for campaign sends, default `/campaign/t1/api/v2` |
-| `AISENSY_SESSION_ENDPOINT` | yes | Path for session (free-form) sends, default `/direct-apis/t1/messages` |
+| `AISENSY_SESSION_ENDPOINT` | yes | Path for session sends. Project API v1 default: `/project-apis/v1/project/{project_id}/messages`. Legacy Direct APIs: `/direct-apis/t1/messages` (no `{project_id}` needed). |
 | `AISENSY_WEBHOOK_SECRET` | no | If set, inbound webhooks must send a matching HMAC (see troubleshooting). Empty = skip verification. |
 | `AISENSY_SOURCE` | no | Tag string sent with campaign (e.g. `terrarex-dashboard`) |
 
-> **Which AiSensy key goes where?**
-> Open AiSensy dashboard → **Manage → API Key**. Most accounts show two values:
-> - **Campaign API Key** (shorter, used in the v2 campaign body) → put in `AISENSY_API_KEY`.
-> - **Direct / Project API Key or Password** (longer JWT-like string) → put in `AISENSY_API_TOKEN`.
+> **AiSensy has two different outbound APIs on two different hosts.**
 >
-> If your account shows only one value, put it in `AISENSY_API_KEY` and leave `AISENSY_API_TOKEN` empty — the backend will try it against both endpoints.
+> | | Session sends (AI + inbox replies) | Campaign sends |
+> |---|---|---|
+> | Host | `apis.aisensy.com` (Project API v1) | `backend.aisensy.com` |
+> | Path | `/project-apis/v1/project/{project_id}/messages` | `/campaign/t1/api/v2` |
+> | Credential | "Project API Keys" tab → `AISENSY_API_TOKEN` | "API Campaign Key" tab → `AISENSY_API_KEY` |
+> | Auth | `Authorization: Bearer <token>` *or* `X-AiSensy-Project-API-Pwd` (header) | `apiKey` in JSON body |
+> | Also needs | `AISENSY_PROJECT_ID` | — |
+>
+> Older AiSensy accounts use "Direct APIs" instead of Project API v1 — same host as campaigns (`backend.aisensy.com/direct-apis/t1/messages`). Change `AISENSY_BASE_URL` + `AISENSY_SESSION_ENDPOINT` accordingly.
 >
 > **Debugging a rejected credential:** after deploying, call
 > `POST /api/v1/integrations/aisensy/probe-auth` (auth required). It tries every
 > combination of (your configured credentials × `Bearer` / `X-AiSensy-Project-API-Pwd`)
-> against `/direct-apis/t1/messages` with an empty body and reports which
+> against the configured session endpoint with an empty body and reports which
 > combination AiSensy accepts — so you know exactly which env var and
 > `AISENSY_AUTH_METHOD` to pin.
 
@@ -227,31 +234,38 @@ Mandatory keys for a working local dev run:
 `AISENSY_API_KEY`, `ANTHROPIC_API_KEY` (or
 `OPENAI_API_KEY`), `NEXT_PUBLIC_API_BASE_URL`.
 
-### AI and human messages both fail to send (AiSensy 401 / 422 / bad token)
+### AI and human messages both fail to send (AiSensy 401 / 404 / 422 / bad token)
 
-Both session sends (AI replies + human replies from the inbox) hit
-`POST /direct-apis/t1/messages` on AiSensy. If neither works:
+Both session sends (AI replies + human replies from the inbox) hit the
+AiSensy session endpoint. Most failures are one of:
 
-1. **Run the credential probe.** Authenticate to the dashboard, then:
+1. **Wrong endpoint / host.** The most common failure mode. AiSensy runs **two** session APIs on **two** hosts. If your account's "Project API Keys" tab shows a URL like `https://apis.aisensy.com/project-apis/v1/project/<id>/messages`, you must set:
+   ```
+   AISENSY_BASE_URL=https://apis.aisensy.com
+   AISENSY_SESSION_ENDPOINT=/project-apis/v1/project/{project_id}/messages
+   AISENSY_PROJECT_ID=<project id from that tab>
+   ```
+   Older accounts on "Direct APIs" use `AISENSY_BASE_URL=https://backend.aisensy.com` and `AISENSY_SESSION_ENDPOINT=/direct-apis/t1/messages` (no `{project_id}`).
+
+2. **Run the credential + endpoint probe.** Authenticate to the dashboard, then:
    ```bash
    curl -X POST https://<your-host>/api/v1/integrations/aisensy/probe-auth \
         -H "Authorization: Bearer <your-dashboard-jwt>"
    ```
-   The response tells you which combination of `AISENSY_API_TOKEN` / `AISENSY_API_KEY`
-   and `bearer` / `project_pwd` auth style AiSensy accepts. Use that.
+   The response field `probed_endpoint` shows the full URL the backend will hit. If it looks wrong, fix the env vars above first. If the URL is right, the `conclusion` field tells you which combination of `AISENSY_API_TOKEN` / `AISENSY_API_KEY` and `bearer` / `project_pwd` auth style AiSensy accepts.
 
-2. **Pin the accepted combination.**
+3. **Pin the accepted combination.**
    - Put the accepted credential in `AISENSY_API_TOKEN`.
    - Set `AISENSY_AUTH_METHOD=bearer` or `AISENSY_AUTH_METHOD=project_pwd` based on the probe's verdict.
    - Restart the API + worker services.
 
-3. **Check for invisible whitespace.** In Railway, paste tokens into a plain text field and trim leading/trailing spaces or newlines — these silently break auth.
+4. **Check for invisible whitespace.** In Railway, paste tokens into a plain text field and trim leading/trailing spaces or newlines — these silently break auth.
 
-4. **Verify the right keys came from AiSensy.** The Campaign API key and the Direct/Project API key are usually **different** in AiSensy. Using the Campaign key for direct-apis sends yields `Invalid Token`.
+5. **Verify the right keys came from AiSensy.** The "API Campaign Key" and "Project API Keys" tabs issue **different** values. Using the Campaign key for session sends yields `Invalid Token` / 401.
 
-5. **Watch the logs.** Every send logs `aisensy_request` (path, body keys, auth styles tried) and `aisensy_response` (status, body preview). `aisensy_bad_token` logs include a concrete hint in the `hint` field.
+6. **Watch the logs.** Every send logs `aisensy_request` (url, body keys, auth styles tried) and `aisensy_response` (status, body preview). `aisensy_bad_token` logs include a concrete remediation hint.
 
-6. **Service window.** If you see `409 outside 24h window`, AiSensy has never received an inbound from that contact in the last 24h. Send a template campaign first, then use the inbox.
+7. **Service window.** If you see `409 outside 24h window`, AiSensy has never received an inbound from that contact in the last 24h. Send a template campaign first, then use the inbox.
 
 ### Webhook returns 401 (`missing signature` / `bad signature`)
 

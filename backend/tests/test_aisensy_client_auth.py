@@ -28,13 +28,19 @@ def _resp(status: int, payload: str | dict) -> httpx.Response:
     return httpx.Response(status, text=payload, request=req)
 
 
-def _settings(auth_method: str = "auto") -> SimpleNamespace:
+def _settings(
+    auth_method: str = "auto",
+    session_endpoint: str = "/direct-apis/t1/messages",
+    project_id: str = "",
+) -> SimpleNamespace:
     return SimpleNamespace(
         aisensy_base_url="https://backend.aisensy.com",
+        aisensy_campaign_base_url="https://backend.aisensy.com",
         aisensy_api_key="campaign-key",
         aisensy_api_token="project-token",
         aisensy_campaign_endpoint="/campaign/t1/api/v2",
-        aisensy_session_endpoint="/direct-apis/t1/messages",
+        aisensy_session_endpoint=session_endpoint,
+        aisensy_project_id=project_id,
         aisensy_auth_method=auth_method,
         aisensy_source="terrarex-dashboard",
     )
@@ -110,3 +116,63 @@ def test_session_send_auth_method_pinned_to_project_pwd_skips_bearer() -> None:
     headers = client._client.calls[0]["headers"]
     assert "Authorization" not in headers
     assert headers["X-AiSensy-Project-API-Pwd"] == "project-token"
+
+
+def test_session_send_interpolates_project_id_into_endpoint() -> None:
+    """Project API v1 endpoint contains `{project_id}` that must be substituted."""
+    settings = _settings(
+        session_endpoint="/project-apis/v1/project/{project_id}/messages",
+        project_id="abc123",
+    )
+    settings.aisensy_base_url = "https://apis.aisensy.com"
+    client = AiSensyClient(settings=settings)
+    client._client = _DummyHttpClient([_resp(200, {"success": True})])
+    client.send_session_message(SessionSendPayload(destination="+911234567890", body="hi"))
+    url = client._client.calls[0]["path"]
+    assert url == "https://apis.aisensy.com/project-apis/v1/project/abc123/messages"
+
+
+def test_session_send_fails_fast_when_project_id_missing() -> None:
+    """If the endpoint contains {project_id} but AISENSY_PROJECT_ID is empty, raise immediately."""
+    from app.utils.retries import ProviderPermanentError
+
+    settings = _settings(
+        session_endpoint="/project-apis/v1/project/{project_id}/messages",
+        project_id="",
+    )
+    settings.aisensy_base_url = "https://apis.aisensy.com"
+    client = AiSensyClient(settings=settings)
+    client._client = _DummyHttpClient([])
+    try:
+        client.send_session_message(SessionSendPayload(destination="+911234567890", body="hi"))
+    except ProviderPermanentError as exc:
+        assert "AISENSY_PROJECT_ID" in str(exc)
+        assert client._client.calls == []
+    else:
+        raise AssertionError("expected ProviderPermanentError")
+
+
+def test_campaign_and_session_use_different_base_urls() -> None:
+    """Project API v1 lives on apis.aisensy.com; campaigns stay on backend.aisensy.com."""
+    settings = _settings(
+        session_endpoint="/project-apis/v1/project/{project_id}/messages",
+        project_id="p1",
+    )
+    settings.aisensy_base_url = "https://apis.aisensy.com"
+    settings.aisensy_campaign_base_url = "https://backend.aisensy.com"
+    client = AiSensyClient(settings=settings)
+    client._client = _DummyHttpClient(
+        [_resp(200, {"success": True}), _resp(200, {"success": True})]
+    )
+    client.send_session_message(SessionSendPayload(destination="+911234567890", body="hi"))
+    client.send_campaign(
+        CampaignSendPayload(
+            campaign_name="c",
+            destination="911234567890",
+            template_params=[],
+            tags=[],
+            attributes={},
+        )
+    )
+    assert client._client.calls[0]["path"].startswith("https://apis.aisensy.com/")
+    assert client._client.calls[1]["path"].startswith("https://backend.aisensy.com/")
