@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     jwt_access_ttl_min: int = 120
     log_level: str = "INFO"
     cors_origins: str = "http://localhost:3000"
+    # Kill-switch: when true, every outbound AiSensy call is short-circuited
+    # with a logged ProviderPermanentError. Webhooks, the dashboard, the DB,
+    # and inbound processing continue to work normally — only outgoing WhatsApp
+    # traffic is blocked. Flip to `false` and redeploy to resume.
+    disable_service: bool = False
 
     # Database / Redis
     database_url: str

@@ -32,6 +32,7 @@ def _settings(
     auth_method: str = "auto",
     session_endpoint: str = "/direct-apis/t1/messages",
     project_id: str = "",
+    disable_service: bool = False,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         aisensy_base_url="https://backend.aisensy.com",
@@ -43,6 +44,7 @@ def _settings(
         aisensy_project_id=project_id,
         aisensy_auth_method=auth_method,
         aisensy_source="terrarex-dashboard",
+        disable_service=disable_service,
     )
 
 
@@ -150,6 +152,52 @@ def test_session_send_fails_fast_when_project_id_missing() -> None:
         assert client._client.calls == []
     else:
         raise AssertionError("expected ProviderPermanentError")
+
+
+def test_disable_service_blocks_session_send_without_hitting_aisensy() -> None:
+    """When DISABLE_SERVICE=true, no outbound HTTP call should be made."""
+    from app.utils.retries import ProviderPermanentError
+
+    client = AiSensyClient(settings=_settings(disable_service=True))
+    client._client = _DummyHttpClient([])  # no responses prepared — any HTTP call would raise
+    try:
+        client.send_session_message(SessionSendPayload(destination="+911234567890", body="hi"))
+    except ProviderPermanentError as exc:
+        assert "DISABLE_SERVICE" in str(exc)
+        assert client._client.calls == []
+    else:
+        raise AssertionError("expected ProviderPermanentError when DISABLE_SERVICE=true")
+
+
+def test_disable_service_blocks_campaign_send_without_hitting_aisensy() -> None:
+    from app.utils.retries import ProviderPermanentError
+
+    client = AiSensyClient(settings=_settings(disable_service=True))
+    client._client = _DummyHttpClient([])
+    try:
+        client.send_campaign(
+            CampaignSendPayload(
+                campaign_name="c",
+                destination="911234567890",
+                template_params=[],
+                tags=[],
+                attributes={},
+            )
+        )
+    except ProviderPermanentError as exc:
+        assert "DISABLE_SERVICE" in str(exc)
+        assert client._client.calls == []
+    else:
+        raise AssertionError("expected ProviderPermanentError when DISABLE_SERVICE=true")
+
+
+def test_disable_service_false_is_a_no_op() -> None:
+    """The default (false) must not change any existing behavior."""
+    client = AiSensyClient(settings=_settings(disable_service=False))
+    client._client = _DummyHttpClient([_resp(200, {"success": True})])
+    out = client.send_session_message(SessionSendPayload(destination="+911234567890", body="hi"))
+    assert out["success"] is True
+    assert len(client._client.calls) == 1
 
 
 def test_campaign_and_session_use_different_base_urls() -> None:
