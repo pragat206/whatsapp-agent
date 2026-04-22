@@ -141,7 +141,20 @@ def aisensy_probe_auth(
         ("project_pwd", "X-AiSensy-Project-API-Pwd"),
     ]
 
-    url = f"{settings.aisensy_base_url}{settings.aisensy_session_endpoint}"
+    session_path = settings.aisensy_session_endpoint
+    if "{project_id}" in session_path:
+        project_id = (settings.aisensy_project_id or "").strip()
+        if not project_id:
+            return {
+                "ok": False,
+                "error": (
+                    "AISENSY_SESSION_ENDPOINT contains {project_id} but "
+                    "AISENSY_PROJECT_ID is not set. Copy the project id from "
+                    "AiSensy dashboard > Project API Keys tab."
+                ),
+            }
+        session_path = session_path.replace("{project_id}", project_id)
+    url = f"{settings.aisensy_base_url}{session_path}"
     results = []
     with httpx.Client(timeout=httpx.Timeout(10.0, connect=5.0)) as c:
         for env_name, token in credentials.items():
@@ -309,6 +322,13 @@ def aisensy_diagnostics(
     hints: list[str] = []
     if not api_key_set:
         hints.append("AISENSY_API_KEY is missing or empty — outbound sends to AiSensy will fail. Set it in Railway to match your AiSensy project.")
+    if "{project_id}" in settings.aisensy_session_endpoint and not (settings.aisensy_project_id or "").strip():
+        hints.append(
+            "AISENSY_SESSION_ENDPOINT uses Project API v1 ({project_id} placeholder) "
+            "but AISENSY_PROJECT_ID is empty. All session sends (AI + human replies) "
+            "will fail until you set AISENSY_PROJECT_ID to the project id shown in "
+            "AiSensy dashboard > Project API Keys."
+        )
     if webhook_sig_on:
         hints.append(
             "AISENSY_WEBHOOK_SECRET is set — AiSensy must send a matching HMAC or webhooks get 401. If AiSensy has no secret, remove this variable."
@@ -358,6 +378,9 @@ def aisensy_diagnostics(
             "aisensy_base_url": settings.aisensy_base_url,
             "aisensy_campaign_endpoint": settings.aisensy_campaign_endpoint,
             "aisensy_session_endpoint": settings.aisensy_session_endpoint,
+            "aisensy_session_endpoint_needs_project_id": "{project_id}" in settings.aisensy_session_endpoint,
+            "aisensy_project_id_configured": bool((settings.aisensy_project_id or "").strip()),
+            "aisensy_auth_method": settings.aisensy_auth_method,
             "webhook_signature_enforced": webhook_sig_on,
         },
         "database": {

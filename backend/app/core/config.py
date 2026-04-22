@@ -35,9 +35,18 @@ class Settings(BaseSettings):
     # `aisensy_api_key` — AiSensy's newer dashboards issue a single credential
     # that works for both campaign v2 (in body) and direct-apis (as Bearer).
     aisensy_api_token: str = ""
-    aisensy_base_url: str = "https://backend.aisensy.com"
+    # AiSensy ships two separate session-send products on two different hosts:
+    #   1) "Direct APIs"   at backend.aisensy.com/direct-apis/t1/messages (older)
+    #   2) "Project API v1" at apis.aisensy.com/project-apis/v1/project/{project_id}/messages
+    # Campaign API stays on backend.aisensy.com. `aisensy_base_url` is the
+    # session base URL; campaigns use `aisensy_campaign_base_url`. For
+    # Project API v1 you MUST set AISENSY_PROJECT_ID.
+    aisensy_base_url: str = "https://apis.aisensy.com"
+    aisensy_campaign_base_url: str = "https://backend.aisensy.com"
     aisensy_campaign_endpoint: str = "/campaign/t1/api/v2"
-    aisensy_session_endpoint: str = "/direct-apis/t1/messages"
+    aisensy_session_endpoint: str = "/project-apis/v1/project/{project_id}/messages"
+    # Required only when AISENSY_SESSION_ENDPOINT contains `{project_id}` (Project API v1).
+    aisensy_project_id: str = ""
     # How the session endpoint authenticates. `auto` (default) tries Bearer
     # first and falls back to the legacy `X-AiSensy-Project-API-Pwd` header on
     # 401/422. Pin to `bearer` or `project_pwd` if your AiSensy project uses a
