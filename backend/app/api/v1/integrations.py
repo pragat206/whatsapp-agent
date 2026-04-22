@@ -353,6 +353,12 @@ def aisensy_diagnostics(
 
     base = _public_base_url(request)
     hints: list[str] = []
+    if settings.disable_service:
+        hints.append(
+            "DISABLE_SERVICE=true — outbound AiSensy sends are currently muted. "
+            "Webhooks, dashboard, and inbound processing still work. Set "
+            "DISABLE_SERVICE=false and redeploy to resume sending."
+        )
     if not api_key_set:
         hints.append("AISENSY_API_KEY is missing or empty — outbound sends to AiSensy will fail. Set it in Railway to match your AiSensy project.")
     if "{project_id}" in settings.aisensy_session_endpoint and not (settings.aisensy_project_id or "").strip():
@@ -423,6 +429,7 @@ def aisensy_diagnostics(
             "aisensy_session_endpoint_needs_project_id": "{project_id}" in settings.aisensy_session_endpoint,
             "aisensy_project_id_configured": bool((settings.aisensy_project_id or "").strip()),
             "aisensy_auth_method": settings.aisensy_auth_method,
+            "outbound_disabled": bool(settings.disable_service),
             "webhook_signature_enforced": webhook_sig_on,
         },
         "database": {

@@ -180,6 +180,19 @@ class AiSensyClient:
 
     # ------------------------------------------------------------------
     def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        # Outbound kill-switch. When DISABLE_SERVICE=true, refuse every
+        # outgoing AiSensy HTTP call but leave the rest of the app running
+        # (webhooks, dashboard, inbound processing).
+        if getattr(self.settings, "disable_service", False):
+            logger.warning(
+                "aisensy_outbound_muted",
+                path=path,
+                destination=body.get("destination") or body.get("to"),
+                reason="DISABLE_SERVICE=true",
+            )
+            raise ProviderPermanentError(
+                "outbound sends disabled via DISABLE_SERVICE=true"
+            )
         # Strip secrets from logs while keeping the rest of the body visible.
         loggable_body = {k: ("<redacted>" if k.lower() in {"apikey", "api_key"} else v)
                          for k, v in body.items()}
