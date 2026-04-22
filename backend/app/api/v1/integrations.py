@@ -61,8 +61,16 @@ def aisensy_test_send_session(
     """Send a real session (free-form) message to a phone via AiSensy.
 
     Use this to verify the outbound API + key work end-to-end. The recipient
-    must have messaged you in the last 24h or AiSensy will reject the send.
+    must have messaged you in the last 24h or WhatsApp will silently drop the
+    message (AiSensy still returns 2xx — see note below).
+
     Returns the raw AiSensy response so you can see exactly what came back.
+    A `wamid.*` message id in the response means AiSensy accepted the request
+    — it does NOT mean WhatsApp delivered it to the recipient. To confirm
+    delivery you must subscribe a status webhook in AiSensy (Project Webhooks
+    → add `message.status` topic pointing to
+    `/api/v1/webhooks/aisensy/status`) and then check
+    `/integrations/aisensy/recent-events?kind=status`.
     """
     phone = safe_normalize(body.phone)
     if not phone:
@@ -74,7 +82,25 @@ def aisensy_test_send_session(
         return {"ok": False, "error_type": "permanent", "error": str(exc)}
     except ProviderTransientError as exc:
         return {"ok": False, "error_type": "transient", "error": str(exc)}
-    return {"ok": True, "raw_response": resp}
+
+    wamid = None
+    if isinstance(resp, dict):
+        messages = resp.get("messages") or []
+        if messages and isinstance(messages, list) and isinstance(messages[0], dict):
+            wamid = messages[0].get("id")
+    return {
+        "ok": True,
+        "note": (
+            "AiSensy accepted the request. A `wamid.*` id in messages[] means "
+            "the request reached WhatsApp — it does NOT confirm delivery. "
+            "If the recipient has not messaged your business number in the "
+            "last 24 hours, WhatsApp will drop this message silently. "
+            "Subscribe a status webhook (message.status topic) to see the "
+            "real delivered/failed result."
+        ),
+        "wamid": wamid,
+        "raw_response": resp,
+    }
 
 
 @router.post("/aisensy/test-send-campaign")
@@ -315,6 +341,13 @@ def aisensy_diagnostics(
         )
     ) or 0
 
+    status_total = db.scalar(
+        select(func.count()).select_from(RawWebhookEvent).where(
+            RawWebhookEvent.provider == "aisensy",
+            RawWebhookEvent.kind == "status",
+        )
+    ) or 0
+
     contacts_n = db.scalar(select(func.count()).select_from(Contact)) or 0
     convos_n = db.scalar(select(func.count()).select_from(Conversation)) or 0
 
@@ -349,6 +382,15 @@ def aisensy_diagnostics(
     if inbound_normalize_errors:
         hints.append(
             f"{inbound_normalize_errors} inbound webhook(s) stored but normalization failed — check backend logs for normalize_failed; payload shape may need an update in integrations/aisensy/normalizer.py."
+        )
+    if status_total == 0 and base:
+        hints.append(
+            "No message-status webhooks received. WhatsApp delivery can fail "
+            "silently (e.g. outside the 24h window) even when AiSensy returns "
+            "200 OK with a wamid. Subscribe the `message.status` topic in "
+            "AiSensy Project Webhooks pointing to "
+            f"{base}/api/v1/webhooks/aisensy/status so the backend can "
+            "record delivered/failed events."
         )
     # Webhooks arriving but no conversation rows = topic/field mismatch, not
     # normalizer error (normalizer returned None silently because no phone
@@ -389,6 +431,7 @@ def aisensy_diagnostics(
             "aisensy_inbound_webhook_events_total": inbound_total,
             "aisensy_inbound_webhook_events_last_24h": inbound_24h,
             "aisensy_inbound_webhook_normalize_errors": inbound_normalize_errors,
+            "aisensy_status_webhook_events_total": status_total,
         },
         "suggested_webhook_urls": (
             {
