@@ -34,12 +34,13 @@ from app.models.conversation import (
     Conversation,
     ConversationState,
     Message,
+    MessageDirection,
 )
 from app.services.ai.intents import detect_intent
 from app.services.ai.llm import get_llm
-from app.services.ai.prompt import build_context_block, build_messages, build_system_prompt
+from app.services.ai.prompt import build_messages, build_system_prompt
 from app.services.conversation.repo import add_outbound_message, mark_failed, mark_sent
-from app.services.kb.retriever import retrieve, find_faq
+from app.services.kb.retriever import RetrievedChunk, retrieve, find_faq
 from app.services.messaging.window import in_service_window
 from app.utils.retries import ProviderPermanentError, ProviderTransientError
 
@@ -47,15 +48,21 @@ logger = get_logger("ai.runner")
 
 
 def _default_agent(db: Session) -> AgentProfile | None:
-    """Return the default agent profile; create a minimal one if none exist.
+    """Return the agent profile to use for this run.
 
-    Without this, fresh deployments that haven't run `scripts/seed.py` would
-    silently never reply to inbound messages — a confusing "AI is dummy" state.
-    The auto-created profile is safe and uses the business name from settings.
+    Resolution order:
+      1. The agent explicitly marked `is_default=True`.
+      2. The most recently updated agent (helps when an operator edits a
+         profile but forgets to flip the default toggle).
+      3. The oldest agent (deterministic fallback).
+      4. A freshly auto-created profile so fresh deployments don't silently
+         fail to reply.
     """
-    agent = db.scalar(
-        select(AgentProfile).where(AgentProfile.is_default.is_(True)).limit(1)
-    ) or db.scalar(select(AgentProfile).order_by(AgentProfile.created_at).limit(1))
+    agent = (
+        db.scalar(select(AgentProfile).where(AgentProfile.is_default.is_(True)).limit(1))
+        or db.scalar(select(AgentProfile).order_by(AgentProfile.updated_at.desc()).limit(1))
+        or db.scalar(select(AgentProfile).order_by(AgentProfile.created_at).limit(1))
+    )
     if agent is not None:
         return agent
 
@@ -101,16 +108,21 @@ def _run_llm(
     history: list[Message],
     latest_user_text: str,
     kb_chunks,
-) -> str:
+    is_first_reply: bool,
+) -> tuple[str, str]:
+    """Call the LLM and return (reply, system_prompt) for logging."""
     settings = get_settings()
-    system = build_system_prompt(agent, business_name=settings.business_name)
-    kb_ctx = build_context_block(kb_chunks)
+    system = build_system_prompt(
+        agent,
+        business_name=settings.business_name,
+        kb_chunks=kb_chunks,
+        is_first_reply=is_first_reply,
+    )
     messages = build_messages(
         history=history,
         latest_user_text=latest_user_text,
-        kb_context=kb_ctx,
     )
-    return get_llm().chat(system=system, messages=messages)
+    return get_llm().chat(system=system, messages=messages), system
 
 
 def handle_inbound(conversation_id: uuid.UUID, message_id: uuid.UUID) -> None:
@@ -232,30 +244,61 @@ def handle_inbound(conversation_id: uuid.UUID, message_id: uuid.UUID) -> None:
                 reply = _escalation_reply(agent)
                 conversation.state = ConversationState.AI_PAUSED
             else:
+                history = list(conversation.messages or [])
+                # First reply only matters for whether we should greet.
+                is_first_reply = not any(
+                    m.direction == MessageDirection.outbound for m in history
+                )
+                # FAQ match is added to the KB context as a high-confidence
+                # excerpt, but we still call the LLM so persona/tone/greeting
+                # apply. Avoids the previous behavior where FAQ matches were
+                # sent verbatim and ignored the agent profile.
                 faq = find_faq(db, query=user_text)
-                if faq and len(user_text.split()) <= 8:
-                    reply = faq.answer
-                    kb_chunks = []
-                else:
-                    history = list(conversation.messages or [])
-                    kb_chunks = retrieve(
-                        db,
-                        query=user_text,
-                        agent_profile_id=agent.id,
-                        top_k=4,
+                kb_chunks = retrieve(
+                    db,
+                    query=user_text,
+                    agent_profile_id=agent.id,
+                    top_k=6,
+                )
+                if faq:
+                    kb_chunks = [
+                        RetrievedChunk(
+                            document_id=getattr(faq, "id", uuid.uuid4()),
+                            text=f"Q: {faq.question}\nA: {faq.answer}",
+                            score=0.99,
+                            category="faq",
+                            source_title="FAQ",
+                        ),
+                        *kb_chunks,
+                    ]
+                logger.info(
+                    "ai_run_kb_retrieval",
+                    conversation_id=str(conversation_id),
+                    chunk_count=len(kb_chunks),
+                    chunk_sources=[c.source_title for c in kb_chunks][:8],
+                    faq_matched=bool(faq),
+                    is_first_reply=is_first_reply,
+                )
+                try:
+                    reply, system_prompt = _run_llm(
+                        agent=agent,
+                        history=history,
+                        latest_user_text=user_text,
+                        kb_chunks=kb_chunks,
+                        is_first_reply=is_first_reply,
                     )
-                    try:
-                        reply = _run_llm(
-                            agent=agent,
-                            history=history,
-                            latest_user_text=user_text,
-                            kb_chunks=kb_chunks,
-                        )
-                    except Exception as exc:  # noqa: BLE001
-                        logger.exception("llm_failed", error=str(exc))
-                        reply = agent.fallback_message or (
-                            "Let me connect you with a Terra Rex specialist who can help."
-                        )
+                    logger.info(
+                        "ai_run_llm_call",
+                        conversation_id=str(conversation_id),
+                        system_prompt_chars=len(system_prompt),
+                        system_prompt_preview=system_prompt[:600],
+                        reply_preview=reply[:300],
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("llm_failed", error=str(exc))
+                    reply = agent.fallback_message or (
+                        "Let me connect you with someone from our team who can help."
+                    )
 
             if not reply.strip():
                 reply = agent.fallback_message
