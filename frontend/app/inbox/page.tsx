@@ -200,6 +200,7 @@ export default function InboxPage() {
         style={{
           display: "grid",
           gridTemplateColumns: showInfo ? "320px 1fr 280px" : "320px 1fr",
+          gridTemplateRows: "minmax(0, 1fr)",
           gap: 0,
           height: "calc(100vh - 3rem)",
           border: "1px solid var(--border)",
