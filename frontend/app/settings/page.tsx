@@ -43,7 +43,16 @@ export default function SettingsPage() {
           {error && <div style={{ color: "var(--danger)" }} className="small">{error}</div>}
           <button className="primary">Save</button>
         </form>
-        <pre className="small muted" style={{ whiteSpace: "pre-wrap", background: "#0b0f14", padding: 12, borderRadius: 6 }}>
+        <pre
+          className="small muted"
+          style={{
+            whiteSpace: "pre-wrap",
+            background: "var(--bg-soft)",
+            border: "1px solid var(--border)",
+            padding: 12,
+            borderRadius: 6
+          }}
+        >
           {JSON.stringify(items, null, 2)}
         </pre>
       </div>

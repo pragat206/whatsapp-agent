@@ -17,23 +17,23 @@ const STATUSES: { label: string; value: LeadStatus | "" }[] = [
 ];
 
 const STATUS_COLORS: Record<string, { bg: string; fg: string }> = {
-  new: { bg: "#1a2433", fg: "#7ab7ff" },
-  contacted: { bg: "#1a2030", fg: "#9aa6c2" },
-  interested: { bg: "#1f2a14", fg: "#b6db7a" },
-  qualified: { bg: "#1f2a14", fg: "#cfe88c" },
-  hot: { bg: "#33180f", fg: "#ff9e6a" },
-  converted: { bg: "#102a1f", fg: "#6ddfa5" },
-  lost: { bg: "#2b1414", fg: "#e88080" },
-  nurturing: { bg: "#231a2b", fg: "#c69aff" }
+  new: { bg: "var(--info-soft)", fg: "var(--info-text)" },
+  contacted: { bg: "var(--panel-hover)", fg: "var(--muted)" },
+  interested: { bg: "var(--success-soft)", fg: "var(--success-text)" },
+  qualified: { bg: "var(--success-soft)", fg: "var(--success-text)" },
+  hot: { bg: "var(--warn-soft)", fg: "var(--warn-text)" },
+  converted: { bg: "var(--success-soft)", fg: "var(--success-text)" },
+  lost: { bg: "var(--danger-soft)", fg: "var(--danger-text)" },
+  nurturing: { bg: "var(--info-soft)", fg: "var(--info-text)" }
 };
 
 function StatusPill({ value }: { value?: string | null }) {
   if (!value) return <span className="muted small">—</span>;
-  const c = STATUS_COLORS[value] || { bg: "#1d1d1d", fg: "#ddd" };
+  const c = STATUS_COLORS[value] || { bg: "var(--panel)", fg: "var(--text)" };
   return (
     <span
       className="pill"
-      style={{ background: c.bg, color: c.fg, textTransform: "capitalize" }}
+      style={{ background: c.bg, color: c.fg, borderColor: c.bg, textTransform: "capitalize" }}
     >
       {value}
     </span>
@@ -178,7 +178,10 @@ export default function LeadsPage() {
                     onClick={() => setSelectedId(l.contact_id)}
                     style={{
                       cursor: "pointer",
-                      background: selectedId === l.contact_id ? "#1a1f28" : "transparent",
+                      background:
+                        selectedId === l.contact_id
+                          ? "var(--panel-selected)"
+                          : "transparent",
                       borderTop: "1px solid var(--border)"
                     }}
                   >
@@ -303,7 +306,9 @@ export default function LeadsPage() {
                       style={{
                         alignSelf: m.direction === "inbound" ? "flex-start" : "flex-end",
                         background:
-                          m.direction === "inbound" ? "#1d2230" : "#1d271d",
+                          m.direction === "inbound"
+                            ? "var(--bubble-in)"
+                            : "var(--bubble-out)",
                         padding: "6px 10px",
                         borderRadius: 8,
                         maxWidth: "85%",

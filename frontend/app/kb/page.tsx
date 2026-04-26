@@ -303,7 +303,12 @@ export default function KbPage() {
       {error && (
         <div
           className="card"
-          style={{ borderColor: "#f87171", color: "#fecaca", marginBottom: 12 }}
+          style={{
+            borderColor: "var(--danger)",
+            background: "var(--danger-soft)",
+            color: "var(--danger-text)",
+            marginBottom: 12
+          }}
         >
           <div className="small">{error}</div>
           <button className="small" onClick={() => setError(null)}>
@@ -315,7 +320,12 @@ export default function KbPage() {
       {info && (
         <div
           className="card"
-          style={{ borderColor: "#60a5fa", color: "#bfdbfe", marginBottom: 12 }}
+          style={{
+            borderColor: "var(--info)",
+            background: "var(--info-soft)",
+            color: "var(--info-text)",
+            marginBottom: 12
+          }}
         >
           <div className="small">{info}</div>
           <button className="small" onClick={() => setInfo(null)}>
@@ -336,7 +346,8 @@ export default function KbPage() {
                 padding: 6,
                 borderRadius: 6,
                 cursor: "pointer",
-                background: active?.id === k.id ? "#1a2332" : "transparent"
+                background:
+                  active?.id === k.id ? "var(--panel-selected)" : "transparent"
               }}
             >
               <div>{k.name}</div>
@@ -514,7 +525,13 @@ export default function KbPage() {
         {queryHint && (
           <div
             className="small"
-            style={{ marginTop: 8, padding: "8px 10px", borderRadius: 6, background: "#1e293b" }}
+            style={{
+              marginTop: 8,
+              padding: "8px 10px",
+              borderRadius: 6,
+              background: "var(--bg-soft)",
+              border: "1px solid var(--border)"
+            }}
           >
             {queryHint}
           </div>
