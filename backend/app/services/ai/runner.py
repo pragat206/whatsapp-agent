@@ -36,6 +36,7 @@ from app.models.conversation import (
     Message,
     MessageDirection,
 )
+from app.services.ai.extractor import apply_lead_facts, extract_lead_facts
 from app.services.ai.intents import detect_intent
 from app.services.ai.llm import get_llm
 from app.services.ai.prompt import build_messages, build_system_prompt
@@ -102,6 +103,43 @@ def _escalation_reply(agent: AgentProfile) -> str:
     )
 
 
+def _build_customer_memory(contact) -> str:  # type: ignore[no-untyped-def]
+    """Render the per-contact memory block for the system prompt.
+
+    Pulls from the structured Contact columns (name, city, monthly_bill,
+    etc.), the lead summary, and any custom keys the extractor stashed in
+    `lead_extracted_attributes`. Returns an empty string when nothing is
+    known so callers can skip the section entirely.
+    """
+    if contact is None:
+        return ""
+    lines: list[str] = []
+    pairs = [
+        ("Name", contact.name),
+        ("Phone", contact.phone_e164),
+        ("City", contact.city),
+        ("State", contact.state),
+        ("Property type", contact.property_type),
+        ("Monthly electricity bill", contact.monthly_bill),
+        ("Roof type", contact.roof_type),
+    ]
+    for label, value in pairs:
+        if value:
+            lines.append(f"- {label}: {value}")
+    extra = contact.lead_extracted_attributes or {}
+    if isinstance(extra, dict):
+        for k, v in extra.items():
+            if v in (None, "", []):
+                continue
+            lines.append(f"- {k.replace('_', ' ').title()}: {v}")
+    if contact.lead_status:
+        lines.append(f"- Current lead status: {contact.lead_status}")
+    if contact.lead_summary:
+        lines.append("")
+        lines.append(f"Conversation context so far: {contact.lead_summary}")
+    return "\n".join(lines)
+
+
 def _run_llm(
     *,
     agent: AgentProfile,
@@ -109,6 +147,7 @@ def _run_llm(
     latest_user_text: str,
     kb_chunks,
     is_first_reply: bool,
+    customer_memory: str,
 ) -> tuple[str, str]:
     """Call the LLM and return (reply, system_prompt) for logging."""
     settings = get_settings()
@@ -117,6 +156,7 @@ def _run_llm(
         business_name=settings.business_name,
         kb_chunks=kb_chunks,
         is_first_reply=is_first_reply,
+        customer_memory=customer_memory or None,
     )
     messages = build_messages(
         history=history,
@@ -271,6 +311,7 @@ def handle_inbound(conversation_id: uuid.UUID, message_id: uuid.UUID) -> None:
                         ),
                         *kb_chunks,
                     ]
+                customer_memory = _build_customer_memory(conversation.contact)
                 logger.info(
                     "ai_run_kb_retrieval",
                     conversation_id=str(conversation_id),
@@ -278,6 +319,7 @@ def handle_inbound(conversation_id: uuid.UUID, message_id: uuid.UUID) -> None:
                     chunk_sources=[c.source_title for c in kb_chunks][:8],
                     faq_matched=bool(faq),
                     is_first_reply=is_first_reply,
+                    customer_memory_chars=len(customer_memory),
                 )
                 try:
                     reply, system_prompt = _run_llm(
@@ -286,6 +328,7 @@ def handle_inbound(conversation_id: uuid.UUID, message_id: uuid.UUID) -> None:
                         latest_user_text=user_text,
                         kb_chunks=kb_chunks,
                         is_first_reply=is_first_reply,
+                        customer_memory=customer_memory,
                     )
                     logger.info(
                         "ai_run_llm_call",
@@ -401,6 +444,45 @@ def handle_inbound(conversation_id: uuid.UUID, message_id: uuid.UUID) -> None:
                 agent_profile_id=agent.id,
             )
             db.commit()
+
+            # Post-reply lead extraction. Runs AFTER the user-facing message
+            # has been sent and committed — any failure here is logged but
+            # cannot affect message delivery. The contact row is updated in a
+            # fresh attempt; if anything goes wrong we just skip this turn's
+            # extraction and try again next inbound.
+            try:
+                contact = conversation.contact
+                if contact is not None:
+                    refreshed_history = list(conversation.messages or []) + [outbound]
+                    facts = extract_lead_facts(
+                        contact=contact,
+                        history=refreshed_history,
+                        business_name=get_settings().business_name,
+                    )
+                    if facts:
+                        changed = apply_lead_facts(contact, facts)
+                        if changed:
+                            db.commit()
+                            logger.info(
+                                "lead_extractor_applied",
+                                conversation_id=str(conversation_id),
+                                contact_id=str(contact.id),
+                                changed_fields=sorted(changed.keys()),
+                            )
+                        else:
+                            logger.info(
+                                "lead_extractor_no_changes",
+                                conversation_id=str(conversation_id),
+                                contact_id=str(contact.id),
+                            )
+            except Exception as exc:  # noqa: BLE001 — extractor failure must not break delivery
+                logger.warning(
+                    "lead_extractor_failed",
+                    conversation_id=str(conversation_id),
+                    error_type=type(exc).__name__,
+                    error=str(exc)[:300],
+                )
+                db.rollback()
     finally:
         db.close()
 

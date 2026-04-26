@@ -9,6 +9,7 @@ from app.api.v1 import (
     inbox,
     integrations,
     kb,
+    leads,
     settings as settings_router,
     webhooks,
 )
@@ -22,5 +23,6 @@ api_router.include_router(campaigns.router)
 api_router.include_router(kb.router)
 api_router.include_router(agents.router)
 api_router.include_router(contacts.router)
+api_router.include_router(leads.router)
 api_router.include_router(settings_router.router)
 api_router.include_router(analytics.router)
