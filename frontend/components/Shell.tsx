@@ -8,6 +8,7 @@ import type { Me } from "@/lib/types";
 const NAV = [
   { href: "/dashboard", label: "Overview" },
   { href: "/inbox", label: "Inbox" },
+  { href: "/leads", label: "Leads" },
   { href: "/campaigns", label: "Campaigns" },
   { href: "/kb", label: "Knowledge Base" },
   { href: "/agents", label: "Agents" },

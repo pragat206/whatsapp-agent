@@ -84,3 +84,44 @@ export interface CampaignMetrics {
   failed: number;
   pending: number;
 }
+
+export type LeadStatus =
+  | "new"
+  | "contacted"
+  | "interested"
+  | "qualified"
+  | "hot"
+  | "converted"
+  | "lost"
+  | "nurturing";
+
+export interface Lead {
+  contact_id: string;
+  phone_e164: string;
+  name?: string | null;
+  city?: string | null;
+  state?: string | null;
+  property_type?: string | null;
+  monthly_bill?: string | null;
+  lead_status?: LeadStatus | null;
+  lead_next_action?: string | null;
+  lead_next_action_at?: string | null;
+  lead_summary?: string | null;
+  lead_score?: number | null;
+  lead_extracted_attributes: Record<string, string | number>;
+  lead_updated_at?: string | null;
+  last_message_at?: string | null;
+  message_count: number;
+}
+
+export interface LeadDetail extends Lead {
+  recent_messages: {
+    id: string;
+    direction: "inbound" | "outbound";
+    body: string;
+    created_at: string;
+    sender_kind?: string | null;
+  }[];
+  conversation_state?: ConversationState | null;
+  conversation_id?: string | null;
+}

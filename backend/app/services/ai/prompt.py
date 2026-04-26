@@ -29,13 +29,19 @@ def build_system_prompt(
     *,
     kb_chunks: list[RetrievedChunk] | None = None,
     is_first_reply: bool = False,
+    customer_memory: str | None = None,
 ) -> str:
     """Assemble the system prompt for one LLM call.
 
-    Order is deliberate: operator instructions and KB excerpts come BEFORE
-    the generic guardrails. LLMs weight earlier content more heavily, so
-    this keeps custom persona / business-specific behavior from being
-    overridden by the boilerplate.
+    Order is deliberate: operator instructions, customer memory, and KB
+    excerpts come BEFORE the generic guardrails. LLMs weight earlier
+    content more heavily, so this keeps custom persona / business-specific
+    behavior from being overridden by the boilerplate.
+
+    `customer_memory` is the per-contact "Known about this customer" block
+    — name, city, monthly_bill, lead_summary, etc. — assembled from the
+    Contact row by the runner. Injecting it here is what stops the AI
+    from re-asking for facts the user has already shared.
     """
     sections: list[str] = []
 
@@ -45,6 +51,15 @@ def build_system_prompt(
         f"You are the WhatsApp assistant for {business_name}.\n"
         f"Role: {purpose}"
     )
+
+    # 2. Per-customer memory — placed early so the model treats these facts
+    # as ground truth before any KB lookup or guardrail kicks in.
+    if customer_memory:
+        sections.append(
+            "Known about this customer (DO NOT re-ask for any of this — "
+            "use it directly when relevant):\n"
+            f"{customer_memory}"
+        )
 
     # 2. Operator instructions — top priority.
     instructions = (agent.instructions or "").strip()
