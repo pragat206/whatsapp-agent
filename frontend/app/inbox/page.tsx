@@ -42,6 +42,7 @@ export default function InboxPage() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const selectedIdRef = useRef<string | null>(null);
 
@@ -100,7 +101,9 @@ export default function InboxPage() {
   }, [selected?.id]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
   }, [selected?.messages?.length, selected?.id]);
 
   // Close kebab menu when clicking outside.
@@ -496,6 +499,7 @@ export default function InboxPage() {
 
               {/* Messages */}
               <div
+                ref={messagesContainerRef}
                 style={{
                   flex: 1,
                   overflow: "auto",
