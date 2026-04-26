@@ -215,6 +215,8 @@ export default function InboxPage() {
             flexDirection: "column",
             borderRight: "1px solid var(--border)",
             minWidth: 0,
+            minHeight: 0,
+            height: "100%",
             background: "var(--bg-soft)"
           }}
         >
@@ -259,7 +261,7 @@ export default function InboxPage() {
             </div>
           </div>
 
-          <div style={{ overflow: "auto", flex: 1 }}>
+          <div style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
             {convs.map((c) => {
               const active = selected?.id === c.id;
               const unread = c.unread_count > 0;
@@ -383,6 +385,8 @@ export default function InboxPage() {
             display: "flex",
             flexDirection: "column",
             minWidth: 0,
+            minHeight: 0,
+            height: "100%",
             background: "var(--bg)"
           }}
         >
@@ -502,7 +506,8 @@ export default function InboxPage() {
                 ref={messagesContainerRef}
                 style={{
                   flex: 1,
-                  overflow: "auto",
+                  minHeight: 0,
+                  overflowY: "auto",
                   display: "flex",
                   flexDirection: "column",
                   padding: "14px 16px",
