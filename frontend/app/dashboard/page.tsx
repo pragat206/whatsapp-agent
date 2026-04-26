@@ -195,7 +195,7 @@ export default function Dashboard() {
           style={{
             marginTop: 16,
             maxWidth: 900,
-            borderColor: !system.summary.healthy ? "#f87171" : undefined
+            borderColor: !system.summary.healthy ? "var(--danger)" : undefined
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -259,7 +259,7 @@ export default function Dashboard() {
           style={{
             marginTop: 16,
             maxWidth: 900,
-            borderColor: aisensy.hints.length ? "#ca8a04" : undefined
+            borderColor: aisensy.hints.length ? "var(--warn)" : undefined
           }}
         >
           <div style={{ fontWeight: 600 }}>AiSensy ↔ this app</div>
@@ -347,10 +347,10 @@ export default function Dashboard() {
                 className="small"
                 style={{
                   whiteSpace: "pre-wrap",
-                  background: "#0b0f14",
+                  background: "var(--bg-soft)",
                   padding: 8,
                   borderRadius: 6,
-                  color: sessResult.ok ? "#86efac" : "#fca5a5",
+                  color: sessResult.ok ? "var(--success-text)" : "var(--danger-text)",
                   maxHeight: 180,
                   overflow: "auto"
                 }}
@@ -393,10 +393,10 @@ export default function Dashboard() {
                 className="small"
                 style={{
                   whiteSpace: "pre-wrap",
-                  background: "#0b0f14",
+                  background: "var(--bg-soft)",
                   padding: 8,
                   borderRadius: 6,
-                  color: tmplResult.ok ? "#86efac" : "#fca5a5",
+                  color: tmplResult.ok ? "var(--success-text)" : "var(--danger-text)",
                   maxHeight: 180,
                   overflow: "auto"
                 }}
@@ -442,7 +442,7 @@ export default function Dashboard() {
                 <details
                   key={ev.id}
                   style={{
-                    background: "#0b0f14",
+                    background: "var(--bg-soft)",
                     padding: 8,
                     borderRadius: 6
                   }}
@@ -451,7 +451,7 @@ export default function Dashboard() {
                     style={{
                       cursor: "pointer",
                       fontSize: "0.82rem",
-                      color: ev.error ? "#fca5a5" : "var(--text)"
+                      color: ev.error ? "var(--danger-text)" : "var(--text)"
                     }}
                   >
                     {ev.created_at} · {ev.kind} ·{" "}

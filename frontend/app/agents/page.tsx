@@ -146,7 +146,12 @@ export default function AgentsPage() {
       {error && (
         <div
           className="card"
-          style={{ borderColor: "#f87171", color: "#fecaca", marginBottom: 12 }}
+          style={{
+            borderColor: "var(--danger)",
+            background: "var(--danger-soft)",
+            color: "var(--danger-text)",
+            marginBottom: 12
+          }}
         >
           <div className="small">{error}</div>
           <button className="small" onClick={() => setError(null)}>
@@ -164,7 +169,8 @@ export default function AgentsPage() {
                 padding: 6,
                 borderRadius: 6,
                 cursor: "pointer",
-                background: active?.id === a.id ? "#1a2332" : "transparent"
+                background:
+                  active?.id === a.id ? "var(--panel-selected)" : "transparent"
               }}
             >
               {a.name}{" "}

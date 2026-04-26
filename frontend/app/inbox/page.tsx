@@ -159,8 +159,9 @@ export default function InboxPage() {
         <div
           className="card"
           style={{
-            borderColor: "#f87171",
-            color: "#fecaca",
+            borderColor: "var(--danger)",
+            background: "var(--danger-soft)",
+            color: "var(--danger-text)",
             marginBottom: 8,
             display: "flex",
             justifyContent: "space-between",
@@ -210,7 +211,8 @@ export default function InboxPage() {
                   padding: "0.7rem 0.5rem",
                   borderBottom: "1px solid var(--border)",
                   cursor: "pointer",
-                  background: selected?.id === c.id ? "#1a2332" : "transparent"
+                  background:
+                    selected?.id === c.id ? "var(--panel-selected)" : "transparent"
                 }}
               >
                 <div style={{ display: "flex", justifyContent: "space-between" }}>
@@ -283,10 +285,11 @@ export default function InboxPage() {
                       alignSelf: m.direction === "inbound" ? "flex-start" : "flex-end",
                       background:
                         m.direction === "inbound"
-                          ? "#1e293b"
+                          ? "var(--bubble-in)"
                           : m.sender_kind === "ai"
-                          ? "#2b1d57"
-                          : "#14532d",
+                          ? "var(--info-soft)"
+                          : "var(--bubble-out)",
+                      color: "var(--text)",
                       padding: "0.5rem 0.7rem",
                       borderRadius: 8,
                       maxWidth: "70%",
