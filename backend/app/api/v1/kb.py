@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -84,8 +84,8 @@ def add_document(
 @router.post("/{kb_id}/documents/upload", response_model=DocumentOut, status_code=201)
 async def upload_document(
     kb_id: uuid.UUID,
-    title: str,
-    category: str | None = None,
+    title: str = Form(...),
+    category: str | None = Form(None),
     file: UploadFile = File(...),
     db: Session = Depends(db_dep),
     _: User = Depends(require_roles(Role.admin)),

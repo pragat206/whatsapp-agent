@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import Shell from "@/components/Shell";
-import { api, API_BASE_URL, getToken } from "@/lib/api";
+import { api, apiForm } from "@/lib/api";
 
 type Kb = { id: string; name: string; description?: string | null; published: boolean };
 type Doc = {
@@ -165,17 +165,9 @@ export default function KbPage() {
     try {
       const form = new FormData();
       form.append("file", uploadFile);
-      const params = new URLSearchParams({ title: uploadTitle });
-      if (uploadCat) params.set("category", uploadCat);
-      const res = await fetch(
-        `${API_BASE_URL}/kb/${active.id}/documents/upload?${params}`,
-        {
-          method: "POST",
-          headers: { Authorization: `Bearer ${getToken()}` },
-          body: form
-        }
-      );
-      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+      form.append("title", uploadTitle);
+      if (uploadCat) form.append("category", uploadCat);
+      await apiForm(`/kb/${active.id}/documents/upload`, form);
       setUploadTitle("");
       setUploadCat("");
       setUploadFile(null);
