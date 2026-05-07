@@ -9,7 +9,25 @@ from __future__ import annotations
 import re
 
 INTENTS: dict[str, list[str]] = {
-    "speak_to_human":        ["human", "agent", "talk to", "call me", "support", "representative", "executive"],
+    # Require explicit handoff phrases; bare words like "support" or "agent"
+    # match too many legitimate enquiries and were short-circuiting every reply
+    # straight to the fallback / human-handoff path.
+    "speak_to_human": [
+        "speak to a human",
+        "talk to a human",
+        "speak to someone",
+        "talk to someone",
+        "talk to a person",
+        "real person",
+        "real agent",
+        "human agent",
+        "live agent",
+        "customer care",
+        "customer support",
+        "call me back",
+        "please call me",
+        "connect me to",
+    ],
     "unsubscribe":           ["stop", "unsubscribe", "remove me", "don't message", "do not contact"],
     "product_info":          ["product", "panel", "inverter", "battery", "kw", "kwp", "solution"],
     "residential_solar_query": ["home", "house", "residential", "rooftop", "apartment", "villa"],
