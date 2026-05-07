@@ -32,6 +32,11 @@ from app.workers.queue import enqueue_kb_reindex
 router = APIRouter(prefix="/kb", tags=["kb"])
 
 
+def _strip_nul_bytes(value: str) -> str:
+    # Some PDF extractors can emit NUL characters; Postgres text rejects them.
+    return value.replace("\x00", "")
+
+
 @router.post("", response_model=KbOut, status_code=201)
 def create_kb(
     body: KbCreate,
@@ -99,6 +104,7 @@ async def upload_document(
     else:
         text = content.decode("utf-8", errors="ignore")
         kind = "markdown" if fname.endswith(".md") else "text"
+    text = _strip_nul_bytes(text)
     doc = KnowledgeDocument(
         kb_id=kb_id,
         title=title,
