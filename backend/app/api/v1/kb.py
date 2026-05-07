@@ -1,6 +1,7 @@
 """Knowledge Base API."""
 from __future__ import annotations
 
+import re
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
@@ -32,9 +33,20 @@ from app.workers.queue import enqueue_kb_reindex
 router = APIRouter(prefix="/kb", tags=["kb"])
 
 
-def _strip_nul_bytes(value: str) -> str:
-    # Some PDF extractors can emit NUL characters; Postgres text rejects them.
-    return value.replace("\x00", "")
+# C0 control characters except for tab (\t), newline (\n), carriage return (\r).
+# Postgres text rejects NUL, and the rest are not meaningful in extracted text.
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F]")
+
+
+def _sanitize_extracted_text(value: str) -> str:
+    return _CONTROL_CHARS_RE.sub("", value)
+
+
+def _has_meaningful_text(value: str, min_chars: int = 20) -> bool:
+    # After sanitization, require at least `min_chars` non-whitespace characters
+    # so we don't store documents that PDF extraction produced no real text for.
+    non_ws = sum(1 for ch in value if not ch.isspace())
+    return non_ws >= min_chars
 
 
 @router.post("", response_model=KbOut, status_code=201)
@@ -104,7 +116,14 @@ async def upload_document(
     else:
         text = content.decode("utf-8", errors="ignore")
         kind = "markdown" if fname.endswith(".md") else "text"
-    text = _strip_nul_bytes(text)
+    text = _sanitize_extracted_text(text)
+    if not _has_meaningful_text(text):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Could not extract readable text from this file. If it's a PDF, it may be scanned "
+            "or use embedded fonts without a Unicode mapping; try uploading a text/markdown "
+            "version or a PDF with a selectable text layer.",
+        )
     doc = KnowledgeDocument(
         kb_id=kb_id,
         title=title,
