@@ -103,6 +103,25 @@ def _escalation_reply(agent: AgentProfile) -> str:
     )
 
 
+def _conversational_fallback(agent: AgentProfile, *, is_first_reply: bool) -> str:
+    """Reply to use when the LLM fails or returns empty content.
+
+    On the first turn we open with the operator-configured greeting so the
+    customer still sees a real introduction instead of the canned handoff
+    string. On later turns we use a soft, non-handoff acknowledgement so the
+    conversation keeps flowing while ops investigates the LLM error.
+    """
+    if is_first_reply:
+        greeting = (agent.greeting_style or "").strip()
+        if greeting:
+            return greeting
+    soft = (
+        "Thanks for the message — give me a moment to check on that and "
+        "I'll get right back to you."
+    )
+    return soft
+
+
 def _build_customer_memory(contact) -> str:  # type: ignore[no-untyped-def]
     """Render the per-contact memory block for the system prompt.
 
@@ -338,13 +357,24 @@ def handle_inbound(conversation_id: uuid.UUID, message_id: uuid.UUID) -> None:
                         reply_preview=reply[:300],
                     )
                 except Exception as exc:  # noqa: BLE001
-                    logger.exception("llm_failed", error=str(exc))
-                    reply = agent.fallback_message or (
-                        "Let me connect you with someone from our team who can help."
+                    logger.exception(
+                        "llm_failed",
+                        conversation_id=str(conversation_id),
+                        error_type=type(exc).__name__,
+                        error=str(exc)[:500],
                     )
-
-            if not reply.strip():
-                reply = agent.fallback_message
+                    reply = _conversational_fallback(
+                        agent, is_first_reply=is_first_reply
+                    )
+                if not reply.strip():
+                    logger.warning(
+                        "ai_run_empty_llm_reply",
+                        conversation_id=str(conversation_id),
+                        is_first_reply=is_first_reply,
+                    )
+                    reply = _conversational_fallback(
+                        agent, is_first_reply=is_first_reply
+                    )
 
             outbound = add_outbound_message(
                 db,
