@@ -33,6 +33,12 @@ build/
 *.sqlite3
 pgdata/
 
+# Customer-uploaded media (PII: bills, Aadhaar, photos). Keep the folder
+# tracked via .gitkeep / README.md but never commit the actual files.
+user_uploads/*
+!user_uploads/.gitkeep
+!user_uploads/README.md
+
 # Build artifacts
 **/tsconfig.tsbuildinfo
 frontend/package-lock.json

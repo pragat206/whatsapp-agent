@@ -105,6 +105,33 @@ def test_system_prompt_falls_back_to_business_name_when_purpose_blank():
     assert "FitClub" in sys_prompt
 
 
+def test_system_prompt_includes_language_mirroring_rules():
+    sys_prompt = build_system_prompt(_agent(), business_name="FitClub")
+    assert "Language mirroring" in sys_prompt
+    assert "Devanagari" in sys_prompt
+    assert "Hinglish" in sys_prompt
+
+
+def test_system_prompt_forbids_inventing_prices():
+    sys_prompt = build_system_prompt(_agent(), business_name="FitClub")
+    assert "NEVER invent" in sys_prompt or "never invent" in sys_prompt.lower()
+    # The no-fabrication rule must appear after admin instructions / KB.
+    no_invent_idx = sys_prompt.lower().find("never invent")
+    instr_idx = sys_prompt.find("Always confirm the user's preferred slot")
+    assert no_invent_idx > instr_idx
+
+
+def test_system_prompt_blocks_prompt_injection_phrases():
+    sys_prompt = build_system_prompt(_agent(), business_name="FitClub")
+    assert "ignore previous instructions" in sys_prompt.lower()
+
+
+def test_system_prompt_uses_whatsapp_safe_formatting_rules():
+    sys_prompt = build_system_prompt(_agent(), business_name="FitClub")
+    assert "single asterisks" in sys_prompt
+    assert "Markdown headers" in sys_prompt
+
+
 def test_system_prompt_omits_optional_sections_when_unconfigured():
     agent = _agent(
         instructions="",

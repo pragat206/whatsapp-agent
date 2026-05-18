@@ -76,6 +76,17 @@ class Settings(BaseSettings):
     business_name: str = "Terra Rex Energy"
     business_timezone: str = "Asia/Kolkata"
 
+    # Storage for customer-shared documents/media (electricity bills, Aadhaar
+    # photos, voice notes, etc.). Path is resolved relative to the process
+    # CWD when not absolute. In production mount this at a durable volume.
+    user_uploads_dir: str = "user_uploads"
+    # Cap per-file download size to avoid DoS via huge media URLs. 25MB is
+    # well above WhatsApp's own per-message media ceiling.
+    user_uploads_max_bytes: int = 25 * 1024 * 1024
+    # Disable to skip media downloads entirely (useful in tests / offline
+    # environments where the AiSensy CDN is unreachable).
+    user_uploads_enabled: bool = True
+
     @field_validator("cors_origins")
     @classmethod
     def _strip(cls, v: str) -> str:
