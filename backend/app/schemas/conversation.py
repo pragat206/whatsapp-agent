@@ -23,6 +23,10 @@ class MessageOut(BaseModel):
     body: str
     media_url: str | None = None
     media_type: str | None = None
+    # Path under USER_UPLOADS_DIR when we have a local copy of inbound media.
+    # The inbox uses this to render the file from /inbox/messages/{id}/media
+    # instead of the provider CDN (which can expire / require auth).
+    local_media_path: str | None = None
     status: MessageStatus
     provider_message_id: str | None = None
     template_name: str | None = None

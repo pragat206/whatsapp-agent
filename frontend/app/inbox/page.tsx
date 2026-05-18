@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import Shell from "@/components/Shell";
 import StatePill from "@/components/StatePill";
 import Avatar from "@/components/Avatar";
+import MediaAttachment from "@/components/MediaAttachment";
 import MessageStatusIcon from "@/components/MessageStatusIcon";
 import { api } from "@/lib/api";
 import { formatDateLabel, formatListTimestamp, formatTime, isSameDay } from "@/lib/time";
@@ -604,6 +605,8 @@ export default function InboxPage() {
                 }
               />
             </div>
+
+            <SharedFiles messages={selected.messages} />
           </aside>
         )}
       </div>
@@ -784,7 +787,8 @@ function Bubble({ m }: { m: Message }) {
             AI
           </div>
         )}
-        <div>{m.body}</div>
+        {(m.local_media_path || m.media_url) && <MediaAttachment message={m} />}
+        {m.body && <div>{m.body}</div>}
         <div
           style={{
             display: "flex",
@@ -943,6 +947,38 @@ function InfoRow({ label, value }: { label: string; value: string }) {
       </div>
       <div style={{ fontSize: "0.9rem", marginTop: 2, wordBreak: "break-word" }}>
         {value}
+      </div>
+    </div>
+  );
+}
+
+function SharedFiles({ messages }: { messages: Message[] }) {
+  const attachments = messages.filter(
+    (m) => m.direction === "inbound" && (m.local_media_path || m.media_url)
+  );
+  if (attachments.length === 0) return null;
+  return (
+    <div style={{ marginTop: 22 }}>
+      <div
+        className="muted small"
+        style={{
+          fontSize: "0.7rem",
+          textTransform: "uppercase",
+          letterSpacing: 0.4,
+          marginBottom: 8
+        }}
+      >
+        Shared files ({attachments.length})
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {attachments.map((m) => (
+          <div key={m.id}>
+            <MediaAttachment message={m} />
+            <div className="small muted" style={{ fontSize: "0.7rem", marginTop: 2 }}>
+              {formatListTimestamp(m.created_at)}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
