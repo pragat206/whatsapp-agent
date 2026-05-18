@@ -28,6 +28,7 @@ from app.services.conversation.repo import (
     get_or_open_conversation,
 )
 from app.services.conversation.state import external_takeover
+from app.services.media.storage import save_inbound_media
 
 logger = get_logger("messaging.processor")
 
@@ -63,6 +64,17 @@ def process_inbound(db: Session, event: NormalizedInbound) -> tuple[uuid.UUID, u
         )
 
         db.commit()
+
+        # Best-effort: pull customer-shared media to disk under
+        # ``user_uploads/<phone>/``. Failures here never affect message
+        # persistence or AI reply enqueueing — they're already committed.
+        if event.media_url:
+            save_inbound_media(
+                phone_e164=event.from_phone_e164,
+                message_id=msg.id,
+                media_url=event.media_url,
+                media_type=event.media_type,
+            )
 
         if conversation.state == ConversationState.AI_ACTIVE:
             return conversation.id, msg.id
