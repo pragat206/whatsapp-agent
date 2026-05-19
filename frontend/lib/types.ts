@@ -43,6 +43,12 @@ export interface Message {
   direction: "inbound" | "outbound";
   sender_kind: string;
   body: string;
+  media_url?: string | null;
+  media_type?: string | null;
+  // Relative path under USER_UPLOADS_DIR. Present when we have a local
+  // copy of an inbound attachment; UI renders it via the authenticated
+  // /inbox/messages/<id>/media endpoint.
+  local_media_path?: string | null;
   status: string;
   template_name?: string | null;
   created_at: string;

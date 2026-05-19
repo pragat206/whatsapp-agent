@@ -76,6 +76,11 @@ class Message(UUIDPk, Timestamped, Base):
     body: Mapped[str] = mapped_column(Text, nullable=False, default="")
     media_url: Mapped[str | None] = mapped_column(String(1000))
     media_type: Mapped[str | None] = mapped_column(String(60))
+    # Path (relative to USER_UPLOADS_DIR) where we saved the customer-shared
+    # file from `media_url`. Populated best-effort by the inbound webhook —
+    # NULL means either no media on this message, downloads disabled, or the
+    # one-shot fetch failed and we should fall back to the provider URL.
+    local_media_path: Mapped[str | None] = mapped_column(String(500))
     status: Mapped[MessageStatus] = mapped_column(
         Enum(MessageStatus, name="message_status"),
         default=MessageStatus.queued,

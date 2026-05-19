@@ -1,13 +1,17 @@
 """Inbox API: conversations list, detail, send, takeover, pause, resume, close."""
 from __future__ import annotations
 
+import mimetypes
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import current_user, db_dep
+from app.core.config import get_settings
 from app.integrations.aisensy import SessionSendPayload
 from app.integrations.aisensy.client import get_aisensy_client
 from app.models.conversation import Conversation, ConversationState, Message
@@ -270,6 +274,46 @@ def start_conversation(
     detail = ConversationDetail.model_validate(convo)
     detail.messages = [MessageOut.model_validate(m) for m in convo.messages]
     return detail
+
+
+@router.get("/messages/{message_id}/media")
+def get_message_media(
+    message_id: uuid.UUID,
+    db: Session = Depends(db_dep),
+    _: User = Depends(current_user),
+) -> FileResponse:
+    """Stream the customer-shared file we saved for this message.
+
+    Files contain PII (Aadhaar photos, bank passbooks, electricity bills),
+    so the endpoint requires a logged-in dashboard user. The on-disk path
+    is resolved from ``USER_UPLOADS_DIR`` and validated to stay inside it
+    — symlink / traversal attempts are rejected.
+    """
+    msg = db.get(Message, message_id)
+    if msg is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "message not found")
+    if not msg.local_media_path:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no local media for this message")
+
+    settings = get_settings()
+    root = Path(settings.user_uploads_dir)
+    if not root.is_absolute():
+        root = Path.cwd() / root
+    candidate = (root / msg.local_media_path).resolve()
+    root_resolved = root.resolve()
+    if not str(candidate).startswith(str(root_resolved) + ("" if str(root_resolved).endswith("/") else "/")) \
+            and candidate != root_resolved:
+        # Defense in depth — DB value tampering or symlink shenanigans.
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "media path is outside the uploads root")
+    if not candidate.is_file():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "media file missing on disk")
+
+    media_type, _ = mimetypes.guess_type(candidate.name)
+    return FileResponse(
+        path=str(candidate),
+        media_type=media_type or "application/octet-stream",
+        filename=candidate.name,
+    )
 
 
 def _first_id(resp) -> str | None:

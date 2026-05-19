@@ -68,13 +68,18 @@ def process_inbound(db: Session, event: NormalizedInbound) -> tuple[uuid.UUID, u
         # Best-effort: pull customer-shared media to disk under
         # ``user_uploads/<phone>/``. Failures here never affect message
         # persistence or AI reply enqueueing — they're already committed.
+        # On success we record the relative path on the Message row so the
+        # inbox UI can serve the file through an authenticated endpoint.
         if event.media_url:
-            save_inbound_media(
+            local_path = save_inbound_media(
                 phone_e164=event.from_phone_e164,
                 message_id=msg.id,
                 media_url=event.media_url,
                 media_type=event.media_type,
             )
+            if local_path:
+                msg.local_media_path = local_path
+                db.commit()
 
         if conversation.state == ConversationState.AI_ACTIVE:
             return conversation.id, msg.id
