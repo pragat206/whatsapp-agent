@@ -223,10 +223,21 @@ def build_messages(
         direction_value = getattr(m.direction, "value", m.direction)
         role = "user" if direction_value == "inbound" else "assistant"
         content = m.body.strip()
-        if content:
+        if not content:
+            continue
+        # Anthropic rejects payloads where roles do not strictly alternate.
+        # When a customer fires two inbounds back-to-back (common on WhatsApp)
+        # the history yields two consecutive user turns — merge them into one
+        # so the request stays valid.
+        if messages and messages[-1]["role"] == role:
+            messages[-1]["content"] = f"{messages[-1]['content']}\n{content}"
+        else:
             messages.append({"role": role, "content": content})
     if not messages or messages[-1]["role"] != "user":
         messages.append({"role": "user", "content": latest_user_text})
     elif messages[-1]["content"] != latest_user_text:
-        messages.append({"role": "user", "content": latest_user_text})
+        messages[-1]["content"] = f"{messages[-1]['content']}\n{latest_user_text}"
+    # Anthropic also requires the first message to be from the user.
+    while messages and messages[0]["role"] != "user":
+        messages.pop(0)
     return messages
