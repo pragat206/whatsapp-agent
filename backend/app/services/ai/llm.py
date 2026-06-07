@@ -21,12 +21,23 @@ class AnthropicClient:
         self._model = s.ai_model
 
     def chat(self, *, system: str, messages: list[dict], max_tokens: int = 600) -> str:
-        resp = self._client.messages.create(
-            model=self._model,
-            system=system,
-            max_tokens=max_tokens,
-            messages=messages,
-        )
+        # Re-raise APIStatusError with the response body embedded so the
+        # runner's `llm_failed` log line records the actual Anthropic error
+        # (invalid model, role ordering, empty content, etc.) instead of a
+        # bare "400 Bad Request" string.
+        from anthropic import APIStatusError
+        try:
+            resp = self._client.messages.create(
+                model=self._model,
+                system=system,
+                max_tokens=max_tokens,
+                messages=messages,
+            )
+        except APIStatusError as exc:
+            body = getattr(exc, "body", None) or getattr(exc.response, "text", None)
+            raise RuntimeError(
+                f"anthropic_api_error status={exc.status_code} model={self._model} body={body}"
+            ) from exc
         out: list[str] = []
         for block in resp.content:
             if getattr(block, "type", None) == "text":
